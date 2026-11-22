@@ -1,6 +1,7 @@
 package com.AnnindaRajDas.gravityshift.physics;
 
 import com.AnnindaRajDas.gravityshift.entity.Player;
+import com.badlogic.gdx.physics.box2d.Body;
 import com.badlogic.gdx.physics.box2d.Contact;
 import com.badlogic.gdx.physics.box2d.ContactImpulse;
 import com.badlogic.gdx.physics.box2d.ContactListener;
@@ -55,24 +56,25 @@ public class GameContactListener implements ContactListener {
 
         if (dataA instanceof FixtureType typeA && dataB instanceof FixtureType typeB) {
             if (typeA.isPlayerSensor() && typeA.isCompatibleWith(typeB)) {
-                notifyPlayer(fixtureA, typeA, isBegin);
+                notifyPlayer(fixtureA, typeA, fixtureB, isBegin);
             } else if (typeB.isPlayerSensor() && typeB.isCompatibleWith(typeA)) {
-                notifyPlayer(fixtureB, typeB, isBegin);
+                notifyPlayer(fixtureB, typeB, fixtureA, isBegin);
             }
         }
     }
 
-    private void notifyPlayer(Fixture sensorFixture, FixtureType sensorType, boolean isBegin) {
+    private void notifyPlayer(Fixture sensorFixture, FixtureType sensorType, Fixture supportFixture, boolean isBegin) {
         if (sensorFixture.getBody() == null) {
             return;
         }
 
         Object bodyUserData = sensorFixture.getBody().getUserData();
         if (bodyUserData instanceof Player player && !player.isDisposed()) {
+            Body supportBody = (supportFixture != null) ? supportFixture.getBody() : null;
             if (isBegin) {
-                player.onSensorContactBegin(sensorType);
+                player.onSensorContactBegin(sensorType, supportBody);
             } else {
-                player.onSensorContactEnd(sensorType);
+                player.onSensorContactEnd(sensorType, supportBody);
             }
         }
     }

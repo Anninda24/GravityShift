@@ -7,6 +7,112 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.13] - Phase 3F.5: Impulse-Based Movement - 2026-11-22
+
+### Changed
+- **Fixed-Step Impulse-Based Movement Model (`Player.java`, `GameConfig.java`)**:
+  - Replaced legacy direct velocity overwrites in `Player.update()` with fixed-step impulse acceleration inside `onPrePhysicsStep(stepDelta)`.
+  - Implemented acceleration clamping toward desired tangential velocity:
+    - Maximum Ground Acceleration: $40.0\text{ m/s}^2$ ($\Delta v_{\max} \approx 0.667\text{ m/s}$ per step at $60\text{Hz}$).
+    - Maximum Air Acceleration: $20.0\text{ m/s}^2$ ($\Delta v_{\max} \approx 0.333\text{ m/s}$ per step at $60\text{Hz}$).
+  - Strictly preserved gravity-parallel velocity: movement impulses apply $J = (m \times \Delta v_{\text{clamped}}, 0)$ under vertical gravity (`DOWN`/`UP`) and $J = (0, m \times \Delta v_{\text{clamped}})$ under horizontal gravity (`LEFT`/`RIGHT`), ensuring zero cancellation or alteration of freefall, jump launch, or collision normal reactions.
+- **Moving-Platform Support Velocity Tracking (`Player.java`, `GameContactListener.java`)**:
+  - Updated `GameContactListener` to pass supporting body references during sensor contact begin and end events.
+  - Added zero-allocation `Body[] supportingBodies` array tracking active support surfaces across all four cardinal directions.
+  - Grounded movement calculates desired velocity relative to the supporting body's tangential velocity ($v_{\text{desired}} = v_{\text{support}} + \text{moveDirection} \times \text{MOVE\_SPEED}$), eliminating unintended relative sliding when standing still on moving platforms.
+  - Airborne movement safely clears support references and operates relative to the stationary world coordinate frame, preventing stale platform velocity inheritance.
+- **Screen-Relative 4-Way Controls (`PlayerInputController.java`)**:
+  - Maintained screen-relative input mapping: `A`/`D` and Left/Right arrows control horizontal movement under vertical gravity (`DOWN`/`UP`), while `W`/`S` and Up/Down arrows control vertical movement along walls under horizontal gravity (`LEFT`/`RIGHT`).
+
+### Added
+- **Phase 3F.5 Test Suite (`Phase3F5Test.java`)**:
+  - Added 20 focused tests covering grounded acceleration, airborne steering, 4-way gravity-parallel preservation, moving platform relative movement and detachment, velocity reversal, zero-input stability, and full Box2D lifecycle integration.
+  - Regression suite expanded to **113/113 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 20 Phase 3F.5) with 100% pass rate.
+
+---
+
+## [0.3.12] - Phase 3F.4.3: Jump Buffer Physics-Step Ordering Audit - 2026-11-22
+
+### Changed
+- **Physics Lifecycle Hook Architecture (`Player.java`)**:
+  - Relocated fixed physics state machine execution (`stepPhysics`) from `onPrePhysicsStep` to `onPostPhysicsStep`.
+  - Reconstructed exact runtime event sequence:
+    1. `PhysicsController.update()` runs accumulator loop.
+    2. `EntityManager.onPreStep()` dispatches `onPrePhysicsStep` to entities (no-op for jump eligibility).
+    3. `World.step()` advances Box2D simulation; narrowphase contacts fire `GameContactListener.beginContact`/`endContact` synchronously.
+    4. Contact counters (`bottomContacts`, etc.) and multi-surface counts are updated inside the collision step.
+    5. `EntityManager.onPostStep()` dispatches `onPostPhysicsStep` to entities.
+    6. `Player.stepPhysics()` executes at the post-physics boundary: evaluates newly acquired ground contacts from `World.step()`, resets the jump latch if `isGrounded() && leftSupportSinceLaunch`, executes buffered jumps within the 6-step window, and decrements timers.
+  - Resolved the step-6 landing contradiction: Box2D contacts detected during the 6th `World.step()` are immediately visible to `onPostPhysicsStep` before the 6th buffer decrement completes, enabling deterministic buffered jump launch on step 6.
+
+### Added
+- **Real Box2D Physics Lifecycle Regression Suite (`Phase3F4Test.java`)**:
+  - `test38_RealPhysicsLifecycle_LandingOnSixthStepExecutesBufferedJump`: Integrates real `PhysicsController`, `EntityManager`, and Box2D `World.step()`. Verifies that a player descending in air lands during the 6th `World.step()`, contact fires inside the solver, and `onPostPhysicsStep` successfully executes the buffered jump.
+  - `test39_RealPhysicsLifecycle_LandingOnSeventhStepRejectsExpiredBuffer`: Verifies that descending for 6 full airborne steps expires the buffer to $0.0\text{f}$; landing on the 7th step cleanly rejects the expired buffer.
+  - `test40_RealPhysicsLifecycle_PrePostStepSeparationIntegrity`: Verifies that `onPrePhysicsStep` alone does not consume buffers without contact, preserving clear separation of concerns.
+  - Total test suite now stands at 93/93 passing tests (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4).
+
+---
+
+## [0.3.11] - Phase 3F.4.2: Exact Jump Timer Boundary Verification - 2026-11-22
+
+### Changed
+- **Timer Execution Ordering & Discrete Semantics (`Player.java`)**:
+  - Reordered `stepPhysics(float stepDelta)` execution stages: buffered jump execution is evaluated **before** buffer timer decrement. This ensures landings occurring on the final eligible step of the 100ms window (the 6th physics step at $t = 100\text{ms}$) execute rather than being prematurely discarded by decrementing first.
+  - Implemented `TIMER_EPSILON = 1e-4f` ($0.1\text{ms}$) snap threshold for both `coyoteTimer` and `jumpBufferTimer`. Snaps residual IEEE 754 single-precision float residue ($3.725 \times 10^{-9}\text{s}$) to clean $0.0\text{f}$ after exactly 6 complete timer-decrement steps ($6 \times 1/60\text{s} = 0.100\text{s}$).
+  - Documented exact discrete six-step window boundaries:
+    - **Coyote Time**: Jumps at the last eligible step boundary (5 steps elapsed = $83.33\text{ms} < 100\text{ms}$) succeed; jumps after 6 complete timer-decrement steps ($100.0\text{ms}$) fail immediately.
+    - **Jump Buffering**: Landing within the 6-step window (steps 1..6) executes the buffered jump; landing on step 7 (after 6 complete timer-decrement steps) fails to execute.
+
+### Added
+- **Automated Timer Boundary Regression Tests (`Phase3F4Test.java`)**:
+  - Added 9 targeted timer boundary tests (`test29` through `test37`):
+    - `test29_CoyoteTime_SucceedsAtLastEligibleStepBoundary`: Jump request at 5th step boundary ($83.33\text{ms}$) succeeds.
+    - `test30_CoyoteTime_FailsImmediatelyAfterSixCompleteTimerDecrementSteps`: Jump request after 6 complete steps ($100\text{ms}$) fails.
+    - `test31_CoyoteTime_TimerCannotBecomeNegative`: Coyote timer never drops below $0.0\text{f}$ over 120 steps.
+    - `test32_CoyoteTime_RenderFrameDeltaPatternsDoNotChangeBoundary`: $120\text{Hz}$, $30\text{Hz}$, and jitter deltas do not alter fixed 6-step boundary.
+    - `test33_JumpBuffer_ExecutesWhenLandingOccursWithinSixStepWindow`: Landing on the 6th step ($100\text{ms}$) executes buffered jump.
+    - `test34_JumpBuffer_ExpiresAfterSixCompleteTimerDecrementSteps`: Buffer expiring after 6 steps cannot execute on step 7 landing.
+    - `test35_JumpBuffer_ConsumedExactlyOnce`: Buffer clears upon execution and never re-triggers.
+    - `test36_JumpBuffer_IllegitimateCornerTransitionCannotTriggerBufferedJump`: Corner gravity transition without detachment cannot fire buffer.
+    - `test37_ExactTimerOrdering_BufferedJumpEvaluatedBeforeTimerDecrement`: Validates pre-decrement evaluation order in `stepPhysics`.
+  - Full suite expanded to 90 passing tests (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 37 Phase 3F.4), 100% success rate.
+
+---
+
+## [0.3.10] - Phase 3F.4.1: Jump State Machine Invariant Correction - 2026-11-22
+
+### Changed
+- **Physical Departure Tracking Invariant (`Player.java`)**:
+  - Replaced single-direction support departure detection with holistic multi-surface contact tracking via `getAllContactCount() == 0`.
+  - In `executeJump()`, initialized `leftSupportSinceLaunch = (getAllContactCount() == 0)`. A coyote jump launched while touching an adjacent surface (such as a wall in a corner) correctly starts with `leftSupportSinceLaunch = false`.
+  - In `onSensorContactEnd(FixtureType)`, `leftSupportSinceLaunch` transitions to `true` strictly when `getAllContactCount() == 0`. Losing one contact while an orthogonal or opposing surface contact persists (e.g. leaving floor while touching a wall) no longer falsely signals departure.
+  - In `stepPhysics(float stepDelta)`, continuously evaluates `if (getAllContactCount() == 0) leftSupportSinceLaunch = true;` to guarantee state-machine convergence.
+- **Fixed-Step Sole Ownership of Latch Reset (`Player.java`)**:
+  - Removed all `jumpConsumed = false` assignments from Box2D collision callbacks (`onSensorContactBegin`).
+  - Latch reset is exclusively evaluated and executed during `stepPhysics(float stepDelta)` at the discrete 60Hz physics-step boundary when `isGrounded() && leftSupportSinceLaunch`.
+  - Narrowphase contact callbacks strictly manage sensor counters and coyote timers, ensuring state transitions remain deterministic and decoupled from physics solver iteration order.
+- **Anti-Corner-Exploit Guarantee**:
+  - Completely eliminated the corner gravity-switch exploit: jumping while touching both floor and wall, losing floor contact, and switching gravity toward the wall cannot reset the jump latch without first detaching into free air (`getAllContactCount() == 0`).
+  - Buffered jumps executing in multi-surface or corner configurations strictly respect physical departure invariants.
+
+### Added
+- **Automated Invariant Regression Tests (`Phase3F4Test.java`)**:
+  - Added 10 targeted invariant regression tests (`test19` through `test28`):
+    - `test19_TwoSimultaneousContacts_EndingOneDoesNotSetLeftSupport`: Losing 1 of 2 contacts does not trigger departure.
+    - `test20_EndingFinalActiveContactAfterLaunchSetsLeftSupport`: Complete loss of all contacts triggers departure.
+    - `test21_JumpingFromFloorWhileTouchingWallDoesNotCountAsCompleteDeparture`: Launch in corner initializes `leftSupportSinceLaunch = false`.
+    - `test22_SwitchingGravityTowardWallWithoutCompleteDepartureDoesNotResetLatch`: Gravity switch in corner preserves consumed latch.
+    - `test23_CoyoteJumpWhileTouchingAnotherSurfaceInitializesDepartureToFalse`: Coyote jump touching adjacent surface correctly tracks departure.
+    - `test24_ContactCallbackCannotResetJumpConsumed`: Contact begin callback cannot prematurely reset jump latch.
+    - `test25_LegitimateLandingAfterCompleteDepartureResetsLatchAtPhysicsStepBoundary`: Clean departure followed by landing resets latch at physics step boundary.
+    - `test26_BufferedJumpExecutesAfterLegitimateLanding`: Pre-landing jump buffer cleanly triggers jump on valid touchdown.
+    - `test27_BufferedJumpCannotExploitIllegitimateCornerTransition`: Pre-landing buffer cannot fire extra jump across corner gravity switch without detachment.
+    - `test28_ExistingFourDirectionGravityAndJumpRegressionsRemainIntact`: Validates DOWN, UP, LEFT, RIGHT gravity jump directions and velocities remain identical ($6.5\text{ m/s}$).
+  - Full suite expanded to 81 tests (32 in `Phase3F1Test`, 9 in `Phase3F2Test`, 12 in `Phase3F3Test`, 28 in `Phase3F4Test`), all passing with 100% success rate.
+
+---
+
 ## [0.3.9] - Phase 3F.4: Coyote Time & Jump Buffering - 2026-11-22
 
 ### Added

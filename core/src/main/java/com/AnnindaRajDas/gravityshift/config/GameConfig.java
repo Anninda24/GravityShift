@@ -39,6 +39,10 @@ public final class GameConfig {
     public static final float DEFAULT_FRICTION = 0.4f;
     public static final float DEFAULT_RESTITUTION = 0.1f;
 
+    // Movement & Acceleration Parameters (Impulse-based movement)
+    public static final float MAX_GROUND_ACCEL = 40.0f;        // 40 m/s^2 max ground acceleration
+    public static final float MAX_AIR_ACCEL = 20.0f;           // 20 m/s^2 max air acceleration
+
     // Player Jump Timing Constants (Fixed Timestep Physics Duration)
     public static final float COYOTE_DURATION = 0.100f;       // 100ms coyote time window
     public static final float JUMP_BUFFER_DURATION = 0.100f;   // 100ms jump input buffer window

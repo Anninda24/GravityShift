@@ -339,7 +339,7 @@ public class Phase3F3Test {
 
         // Tangential movement along vertical surface
         player.setMoveDirection(1.0f);
-        player.update(GameConfig.TIME_STEP);
+        for (int i = 0; i < 10; i++) player.onPrePhysicsStep(GameConfig.TIME_STEP);
         assertEquals(5.0f, player.getBody().getLinearVelocity().y, EPS);
 
         // Direction-independent jump away from left wall (launches in +X direction)

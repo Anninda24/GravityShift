@@ -109,7 +109,7 @@ public class PlayScreen extends BaseScreen {
         // 1. Process keyboard controller inputs before entity and physics updates
         playerInputController.update();
 
-        // 2. Update entity domain logic and lifecycle (applies movement velocity)
+        // 2. Update entity domain logic and lifecycle
         entityManager.update(delta);
 
         // 3. Advance the physics simulation using the fixed timestep accumulator

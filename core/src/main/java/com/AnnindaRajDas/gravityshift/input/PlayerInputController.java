@@ -1,6 +1,7 @@
 package com.AnnindaRajDas.gravityshift.input;
 
 import com.AnnindaRajDas.gravityshift.entity.Player;
+import com.AnnindaRajDas.gravityshift.physics.Direction;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
 
@@ -43,16 +44,30 @@ public class PlayerInputController {
     }
 
     private void handleMovementInput() {
-        boolean leftPressed = Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT);
-        boolean rightPressed = Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT);
+        if (Gdx.input == null) {
+            return;
+        }
 
+        Direction support = player.getSupportDirection();
         float direction = 0.0f;
-        if (leftPressed && !rightPressed) {
-            direction = -1.0f;
-        } else if (rightPressed && !leftPressed) {
-            direction = 1.0f;
+
+        if (support == Direction.DOWN || support == Direction.UP) {
+            boolean leftPressed = Gdx.input.isKeyPressed(Input.Keys.A) || Gdx.input.isKeyPressed(Input.Keys.LEFT);
+            boolean rightPressed = Gdx.input.isKeyPressed(Input.Keys.D) || Gdx.input.isKeyPressed(Input.Keys.RIGHT);
+            if (leftPressed && !rightPressed) {
+                direction = -1.0f;
+            } else if (rightPressed && !leftPressed) {
+                direction = 1.0f;
+            }
         } else {
-            direction = 0.0f;
+            // Horizontal gravity: up/down controls movement along the wall
+            boolean upPressed = Gdx.input.isKeyPressed(Input.Keys.W) || Gdx.input.isKeyPressed(Input.Keys.UP);
+            boolean downPressed = Gdx.input.isKeyPressed(Input.Keys.S) || Gdx.input.isKeyPressed(Input.Keys.DOWN);
+            if (downPressed && !upPressed) {
+                direction = -1.0f;
+            } else if (upPressed && !downPressed) {
+                direction = 1.0f;
+            }
         }
 
         player.setMoveDirection(direction);

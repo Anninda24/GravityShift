@@ -29,13 +29,16 @@ public class Player extends Entity {
     public static final float FRICTION = 0.2f; // Calibrated low to prevent wall-sticking while maintaining ground control
     public static final float RESTITUTION = 0.0f; // No bounciness for responsive platforming
 
-    // Movement Parameters
+    // Movement & Acceleration Parameters (Impulse-based movement)
     public static final float MOVE_SPEED = 5.0f;     // Horizontal walking/running speed in m/s
+    public static final float MAX_GROUND_ACCEL = GameConfig.MAX_GROUND_ACCEL; // 40 m/s^2 max ground acceleration
+    public static final float MAX_AIR_ACCEL = GameConfig.MAX_AIR_ACCEL;       // 20 m/s^2 max air acceleration
     public static final float JUMP_VELOCITY = 6.5f;  // Initial vertical jump launch velocity in m/s
 
     // Jump Timing Parameters (Fixed Timestep Physics Duration)
     public static final float COYOTE_DURATION = GameConfig.COYOTE_DURATION;
     public static final float JUMP_BUFFER_DURATION = GameConfig.JUMP_BUFFER_DURATION;
+    public static final float TIMER_EPSILON = 1e-4f; // 0.1ms snap threshold to eliminate IEEE 754 float32 residue
 
     private final float width;
     private final float height;
@@ -46,6 +49,12 @@ public class Player extends Entity {
     private int topContacts = 0;
     private int leftContacts = 0;
     private int rightContacts = 0;
+
+    // Support Body References (zero-allocation fixed array indexed by Direction.ordinal())
+    private final Body[] supportingBodies = new Body[4];
+
+    // Reusable Vector for Zero-GC Movement Impulse Application
+    private final Vector2 movementImpulse = new Vector2();
 
     // Jump State Machine & Timers
     private boolean jumpConsumed = false;
@@ -90,9 +99,9 @@ public class Player extends Entity {
     }
 
     /**
-     * Updates player-specific domain state and applies tangential movement velocity before the physics step.
-     * Strictly preserves the velocity component parallel to gravity (freefall and collision reactions)
-     * while setting the tangential velocity component perpendicular to gravity.
+     * Updates player-specific domain state per render frame (e.g. animation timers).
+     * Physical movement is evaluated and applied strictly in {@link #onPrePhysicsStep(float)}
+     * at the fixed-timestep physics boundary to guarantee frame-rate independence.
      *
      * @param delta time elapsed since last frame in seconds
      */
@@ -101,16 +110,73 @@ public class Player extends Entity {
         if (isDisposed() || body == null) {
             return;
         }
+    }
+
+    /**
+     * Calculates and applies fixed-step tangential acceleration impulses toward the desired
+     * tangential velocity.
+     *
+     * Enforces:
+     * - Acceleration clamping: Max 40 m/s^2 grounded, max 20 m/s^2 airborne.
+     * - Invariant: Gravity-parallel velocity is strictly untouched.
+     * - Moving platform support: When grounded on a moving body, movement is relative to
+     *   the support body's tangential velocity.
+     * - Airborne safety: When airborne, platform velocity is not inherited.
+     * - Zero oscillation: Clamped difference directly snaps to desired speed when within one step's delta.
+     *
+     * @param stepDelta duration of the discrete physics step in seconds
+     */
+    public void applyMovementImpulse(float stepDelta) {
+        if (isDisposed() || body == null) {
+            return;
+        }
+        if (!Float.isFinite(stepDelta) || stepDelta <= 0.0f) {
+            return;
+        }
+
+        boolean grounded = isGrounded();
+        float maxAccel = grounded ? MAX_GROUND_ACCEL : MAX_AIR_ACCEL;
+        float maxDeltaV = maxAccel * stepDelta;
 
         Vector2 currentVelocity = body.getLinearVelocity();
-        float targetSpeed = moveDirection * MOVE_SPEED;
+        float mass = body.getMass();
+
+        // Determine supporting body's tangential velocity (strictly when currently grounded)
+        float supportTangentVelocity = 0.0f;
+        if (grounded) {
+            Body supportBody = supportingBodies[supportDirection.ordinal()];
+            if (supportBody != null) {
+                Vector2 supportVel = supportBody.getLinearVelocity();
+                supportTangentVelocity = switch (supportDirection) {
+                    case DOWN, UP -> supportVel.x;
+                    case LEFT, RIGHT -> supportVel.y;
+                };
+            }
+        }
+
+        float desiredTangentSpeed = supportTangentVelocity + moveDirection * MOVE_SPEED;
 
         switch (supportDirection) {
-            case DOWN, UP ->
-                body.setLinearVelocity(targetSpeed, currentVelocity.y);
+            case DOWN, UP -> {
+                float currentVx = currentVelocity.x;
+                float diffVx = desiredTangentSpeed - currentVx;
+                float clampedDiffVx = Math.max(-maxDeltaV, Math.min(maxDeltaV, diffVx));
+                float impulseX = mass * clampedDiffVx;
 
-            case LEFT, RIGHT ->
-                body.setLinearVelocity(currentVelocity.x, targetSpeed);
+                // Apply impulse purely along tangential axis (X). Gravity-parallel axis (Y) is strictly 0.0.
+                movementImpulse.set(impulseX, 0.0f);
+                body.applyLinearImpulse(movementImpulse, body.getWorldCenter(), true);
+            }
+            case LEFT, RIGHT -> {
+                float currentVy = currentVelocity.y;
+                float diffVy = desiredTangentSpeed - currentVy;
+                float clampedDiffVy = Math.max(-maxDeltaV, Math.min(maxDeltaV, diffVy));
+                float impulseY = mass * clampedDiffVy;
+
+                // Apply impulse purely along tangential axis (Y). Gravity-parallel axis (X) is strictly 0.0.
+                movementImpulse.set(0.0f, impulseY);
+                body.applyLinearImpulse(movementImpulse, body.getWorldCenter(), true);
+            }
         }
     }
 
@@ -136,27 +202,44 @@ public class Player extends Entity {
                 jumpConsumed = false;
             }
         } else {
-            if (getGroundContacts() == 0) {
+            if (getAllContactCount() == 0) {
                 leftSupportSinceLaunch = true;
             }
             if (coyoteTimer > 0.0f) {
                 coyoteTimer = Math.max(0.0f, coyoteTimer - stepDelta);
+                if (coyoteTimer <= TIMER_EPSILON) {
+                    coyoteTimer = 0.0f;
+                }
             }
         }
 
-        // 2. Decrement jump input buffer timer
-        if (jumpBufferTimer > 0.0f) {
-            jumpBufferTimer = Math.max(0.0f, jumpBufferTimer - stepDelta);
-        }
-
-        // 3. Process buffered jump execution
+        // 2. Process buffered jump execution
+        // Evaluated BEFORE buffer timer decrement so that landings occurring within
+        // the six-step window (including on the 6th physics step) can execute.
         if (jumpBufferTimer > 0.0f && canLaunchJump()) {
             executeJump();
+        }
+
+        // 3. Decrement jump input buffer timer
+        if (jumpBufferTimer > 0.0f) {
+            jumpBufferTimer = Math.max(0.0f, jumpBufferTimer - stepDelta);
+            if (jumpBufferTimer <= TIMER_EPSILON) {
+                jumpBufferTimer = 0.0f;
+            }
         }
     }
 
     @Override
     public void onPrePhysicsStep(float stepDelta) {
+        // Pre-physics step hook: applies tangential movement impulses prior to Box2D simulation
+        applyMovementImpulse(stepDelta);
+    }
+
+    @Override
+    public void onPostPhysicsStep(float stepDelta) {
+        // Post-physics step hook: evaluates contact updates from World.step(),
+        // resets jump latch upon legitimate landing, processes buffered jumps,
+        // and decrements fixed-step timers at the deterministic physics boundary.
         stepPhysics(stepDelta);
     }
 
@@ -196,7 +279,7 @@ public class Player extends Entity {
         }
 
         this.jumpConsumed = true;
-        this.leftSupportSinceLaunch = (getGroundContacts() == 0);
+        this.leftSupportSinceLaunch = (getAllContactCount() == 0);
         this.coyoteTimer = 0.0f;
         this.jumpBufferTimer = 0.0f;
     }
@@ -300,13 +383,23 @@ public class Player extends Entity {
     /**
      * Callback invoked by GameContactListener when a directional sensor enters contact
      * with a valid supporting surface (GROUND, WALL, CEILING).
-     * Increments the sensor counter and resets the jump latch ONLY when transitioning
-     * from 0 to 1 contacts along the active support direction if the player genuinely
-     * left support since the previous jump launch.
+     * Increments the sensor counter and refreshes coyote window if transitioning from 0 contacts.
+     * Note: Does NOT reset jump latch; latch reset is exclusively owned by fixed physics steps.
      *
      * @param sensorType the sensor fixture type that made contact
      */
     public void onSensorContactBegin(FixtureType sensorType) {
+        onSensorContactBegin(sensorType, null);
+    }
+
+    /**
+     * Callback invoked by GameContactListener when a directional sensor enters contact
+     * with a supporting surface body (static, kinematic, or dynamic).
+     *
+     * @param sensorType  the sensor fixture type that made contact
+     * @param supportBody the Body of the contacted supporting surface (or null)
+     */
+    public void onSensorContactBegin(FixtureType sensorType, Body supportBody) {
         if (isDisposed() || sensorType == null) {
             return;
         }
@@ -317,10 +410,11 @@ public class Player extends Entity {
         }
 
         if (dir == supportDirection && getContactCount(dir) == 0) {
-            if (leftSupportSinceLaunch) {
-                jumpConsumed = false;
-            }
             coyoteTimer = COYOTE_DURATION;
+        }
+
+        if (supportBody != null) {
+            supportingBodies[dir.ordinal()] = supportBody;
         }
 
         incrementContact(dir);
@@ -330,11 +424,23 @@ public class Player extends Entity {
      * Callback invoked by GameContactListener when a directional sensor leaves contact
      * with a supporting surface.
      * Decrements the corresponding contact counter with underflow protection.
-     * Sets leftSupportSinceLaunch = true and starts the coyote window if jump was not consumed.
+     * Sets leftSupportSinceLaunch = true ONLY when ALL physical surface contacts reach zero.
+     * Starts the coyote window along the active support direction if jump was not consumed.
      *
      * @param sensorType the sensor fixture type that broke contact
      */
     public void onSensorContactEnd(FixtureType sensorType) {
+        onSensorContactEnd(sensorType, null);
+    }
+
+    /**
+     * Callback invoked by GameContactListener when a directional sensor leaves contact
+     * with a supporting surface body.
+     *
+     * @param sensorType  the sensor fixture type that broke contact
+     * @param supportBody the Body of the supporting surface leaving contact (or null)
+     */
+    public void onSensorContactEnd(FixtureType sensorType, Body supportBody) {
         if (isDisposed() || sensorType == null) {
             return;
         }
@@ -346,8 +452,16 @@ public class Player extends Entity {
 
         decrementContact(dir);
 
-        if (dir == supportDirection && getContactCount(dir) == 0) {
+        if (getContactCount(dir) == 0) {
+            supportingBodies[dir.ordinal()] = null;
+        }
+
+        // Complete physical departure requires detaching from ALL active surface contacts
+        if (getAllContactCount() == 0) {
             leftSupportSinceLaunch = true;
+        }
+
+        if (dir == supportDirection && getContactCount(dir) == 0) {
             if (!jumpConsumed) {
                 coyoteTimer = COYOTE_DURATION;
             } else {
@@ -448,6 +562,24 @@ public class Player extends Entity {
     }
 
     /**
+     * Returns the aggregate count of all active physical contacts across all four directional sensors.
+     *
+     * @return sum of active bottom, top, left, and right contacts
+     */
+    public int getAllContactCount() {
+        return bottomContacts + topContacts + leftContacts + rightContacts;
+    }
+
+    /**
+     * Returns whether the player is touching any physical surface in any direction.
+     *
+     * @return true if touching at least one surface, false if completely free in air
+     */
+    public boolean hasAnyContact() {
+        return getAllContactCount() > 0;
+    }
+
+    /**
      * Returns whether the jump input has been consumed for the current unsupported cycle.
      *
      * @return true if jump is consumed, false otherwise
@@ -509,6 +641,9 @@ public class Player extends Entity {
             topContacts = 0;
             leftContacts = 0;
             rightContacts = 0;
+            for (int i = 0; i < supportingBodies.length; i++) {
+                supportingBodies[i] = null;
+            }
             jumpConsumed = false;
             leftSupportSinceLaunch = true;
             coyoteTimer = 0.0f;
@@ -516,6 +651,28 @@ public class Player extends Entity {
             moveDirection = 0.0f;
             supportDirection = Direction.DOWN;
         }
+    }
+
+    /**
+     * Returns the supporting Body along the specified cardinal direction, or null if none.
+     *
+     * @param direction direction to query
+     * @return supporting body or null
+     */
+    public Body getSupportingBody(Direction direction) {
+        if (direction == null) {
+            return null;
+        }
+        return supportingBodies[direction.ordinal()];
+    }
+
+    /**
+     * Returns the supporting Body along the currently active support direction, or null if unsupported.
+     *
+     * @return currently active supporting body or null
+     */
+    public Body getActiveSupportingBody() {
+        return isGrounded() ? supportingBodies[supportDirection.ordinal()] : null;
     }
 
     public float getWidth() {

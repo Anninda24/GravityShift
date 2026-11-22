@@ -299,7 +299,9 @@ public class Phase3F1Test {
 
         player.getBody().setLinearVelocity(2f, -3f);
         player.setMoveDirection(1.0f);
-        player.update(1f / 60f);
+        for (int i = 0; i < 10; i++) {
+            player.onPrePhysicsStep(GameConfig.TIME_STEP);
+        }
 
         assertEquals(5.0f, player.getBody().getLinearVelocity().x, EPS);
         assertEquals(-3.0f, player.getBody().getLinearVelocity().y, EPS);
@@ -328,7 +330,9 @@ public class Phase3F1Test {
 
         player.getBody().setLinearVelocity(2f, 3f);
         player.setMoveDirection(-1.0f);
-        player.update(1f / 60f);
+        for (int i = 0; i < 15; i++) {
+            player.onPrePhysicsStep(GameConfig.TIME_STEP);
+        }
 
         assertEquals(-5.0f, player.getBody().getLinearVelocity().x, EPS);
         assertEquals(3.0f, player.getBody().getLinearVelocity().y, EPS);
@@ -357,7 +361,9 @@ public class Phase3F1Test {
 
         player.getBody().setLinearVelocity(-4f, 2f);
         player.setMoveDirection(1.0f);
-        player.update(1f / 60f);
+        for (int i = 0; i < 10; i++) {
+            player.onPrePhysicsStep(GameConfig.TIME_STEP);
+        }
 
         assertEquals(5.0f, player.getBody().getLinearVelocity().y, EPS);
         assertEquals(-4.0f, player.getBody().getLinearVelocity().x, EPS);
@@ -386,7 +392,9 @@ public class Phase3F1Test {
 
         player.getBody().setLinearVelocity(4f, 2f);
         player.setMoveDirection(-1.0f);
-        player.update(1f / 60f);
+        for (int i = 0; i < 15; i++) {
+            player.onPrePhysicsStep(GameConfig.TIME_STEP);
+        }
 
         assertEquals(-5.0f, player.getBody().getLinearVelocity().y, EPS);
         assertEquals(4.0f, player.getBody().getLinearVelocity().x, EPS);
@@ -432,11 +440,11 @@ public class Phase3F1Test {
 
         // Horizontal movement
         player.setMoveDirection(1.0f);
-        player.update(GameConfig.TIME_STEP);
+        for (int i = 0; i < 10; i++) player.onPrePhysicsStep(GameConfig.TIME_STEP);
         assertEquals(5.0f, player.getBody().getLinearVelocity().x, EPS);
 
         player.setMoveDirection(-1.0f);
-        player.update(GameConfig.TIME_STEP);
+        for (int i = 0; i < 20; i++) player.onPrePhysicsStep(GameConfig.TIME_STEP);
         assertEquals(-5.0f, player.getBody().getLinearVelocity().x, EPS);
 
         // Jump
@@ -447,6 +455,7 @@ public class Phase3F1Test {
         // Fall and land again
         for (int i = 0; i < 120; i++) {
             world.step(GameConfig.TIME_STEP, 8, 3);
+            player.stepPhysics(GameConfig.TIME_STEP);
             if (player.isGrounded() && !player.isJumpConsumed()) break;
         }
         assertTrue(player.isGrounded(), "Player must be grounded upon landing");
@@ -485,7 +494,7 @@ public class Phase3F1Test {
 
         // Horizontal movement
         player.setMoveDirection(1.0f);
-        player.update(GameConfig.TIME_STEP);
+        for (int i = 0; i < 10; i++) player.onPrePhysicsStep(GameConfig.TIME_STEP);
         assertEquals(5.0f, player.getBody().getLinearVelocity().x, EPS);
 
         // Jump downward
@@ -516,7 +525,7 @@ public class Phase3F1Test {
 
         // Vertical tangential movement
         player.setMoveDirection(1.0f);
-        player.update(GameConfig.TIME_STEP);
+        for (int i = 0; i < 10; i++) player.onPrePhysicsStep(GameConfig.TIME_STEP);
         assertEquals(5.0f, player.getBody().getLinearVelocity().y, EPS);
 
         // Jump away from left wall (rightward, positive X)
@@ -547,7 +556,7 @@ public class Phase3F1Test {
 
         // Vertical tangential movement
         player.setMoveDirection(-1.0f);
-        player.update(GameConfig.TIME_STEP);
+        for (int i = 0; i < 10; i++) player.onPrePhysicsStep(GameConfig.TIME_STEP);
         assertEquals(-5.0f, player.getBody().getLinearVelocity().y, EPS);
 
         // Jump away from right wall (leftward, negative X)
@@ -637,8 +646,14 @@ public class Phase3F1Test {
             assertFalse(player.jump(), "Airborne player cannot jump");
         }
 
+        // Wait for airborne jump buffer to expire (> 100ms)
+        for (int i = 0; i < 7; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+        }
+
         // Land on surface
         player.onSensorContactBegin(FixtureType.PLAYER_RIGHT_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
         assertTrue(player.isGrounded());
         assertFalse(player.isJumpConsumed());
         assertTrue(player.jump());
@@ -803,7 +818,7 @@ public class Phase3F1Test {
 
         player.getBody().setLinearVelocity(-7.0f, 0.0f);
         player.setMoveDirection(1.0f);
-        player.update(GameConfig.TIME_STEP);
+        for (int i = 0; i < 20; i++) player.onPrePhysicsStep(GameConfig.TIME_STEP);
 
         assertEquals(-7.0f, player.getBody().getLinearVelocity().x, EPS, "Normal velocity must be preserved");
         assertEquals(5.0f, player.getBody().getLinearVelocity().y, EPS, "Tangential velocity must be updated");

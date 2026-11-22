@@ -346,6 +346,7 @@ public class Phase3F4Test {
 
         // Land on LEFT wall
         player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
         assertTrue(player.isGrounded(), "Grounded against left wall");
         assertFalse(player.isJumpConsumed(), "Latch must reset upon genuine landing against new surface");
         assertTrue(player.jump(), "Jump away from left wall must succeed");
@@ -486,6 +487,7 @@ public class Phase3F4Test {
 
             // Land again
             player.onSensorContactBegin(sensor);
+            player.stepPhysics(GameConfig.TIME_STEP);
             assertFalse(player.isJumpConsumed(), "Latch must reset on landing along " + dir);
             player.onSensorContactEnd(sensor);
         }
@@ -503,6 +505,7 @@ public class Phase3F4Test {
         // DOWN: gravity -Y -> jump +Y
         player.onGravityDirectionChanged(Direction.DOWN);
         player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
         assertTrue(player.jump());
         assertEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
         player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
@@ -510,6 +513,7 @@ public class Phase3F4Test {
         // UP: gravity +Y -> jump -Y
         player.onGravityDirectionChanged(Direction.UP);
         player.onSensorContactBegin(FixtureType.PLAYER_TOP_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
         assertTrue(player.jump());
         assertEquals(-Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
         player.onSensorContactEnd(FixtureType.PLAYER_TOP_SENSOR);
@@ -517,6 +521,7 @@ public class Phase3F4Test {
         // LEFT: gravity -X -> jump +X
         player.onGravityDirectionChanged(Direction.LEFT);
         player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
         assertTrue(player.jump());
         assertEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().x, EPS);
         player.onSensorContactEnd(FixtureType.PLAYER_LEFT_SENSOR);
@@ -524,6 +529,7 @@ public class Phase3F4Test {
         // RIGHT: gravity +X -> jump -X
         player.onGravityDirectionChanged(Direction.RIGHT);
         player.onSensorContactBegin(FixtureType.PLAYER_RIGHT_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
         assertTrue(player.jump());
         assertEquals(-Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().x, EPS);
         player.onSensorContactEnd(FixtureType.PLAYER_RIGHT_SENSOR);
@@ -557,5 +563,704 @@ public class Phase3F4Test {
         assertDoesNotThrow(() -> player.onGravityDirectionChanged(Direction.UP));
 
         world.dispose();
+    }
+
+    // 19. Two simultaneous contacts; ending one does not set leftSupportSinceLaunch
+    @Test
+    public void test19_TwoSimultaneousContacts_EndingOneDoesNotSetLeftSupport() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        // Grounded on DOWN floor and touching LEFT wall in a corner
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+        assertEquals(2, player.getAllContactCount(), "Two aggregate contacts must be active");
+
+        // Player jumps
+        assertTrue(player.jump());
+        assertTrue(player.isJumpConsumed());
+        assertFalse(player.hasLeftSupportSinceLaunch(), "Departure flag must be false upon launch");
+
+        // Bottom floor contact ends, but left wall contact remains
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertEquals(1, player.getAllContactCount(), "One active contact remains on left wall");
+        assertEquals(0, player.getGroundContacts(), "Floor contacts reached 0");
+
+        // Assert: leftSupportSinceLaunch must NOT be set to true because wall contact remains!
+        assertFalse(player.hasLeftSupportSinceLaunch(),
+            "Losing floor contact while still touching wall must NOT mark complete physical departure");
+
+        world.dispose();
+    }
+
+    // 20. Ending the final active contact after launch sets leftSupportSinceLaunch
+    @Test
+    public void test20_EndingFinalActiveContactAfterLaunchSetsLeftSupport() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+        assertTrue(player.jump());
+
+        // First contact ends
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertFalse(player.hasLeftSupportSinceLaunch(), "Still touching wall");
+
+        // Final active contact ends (player completely detaches into free air)
+        player.onSensorContactEnd(FixtureType.PLAYER_LEFT_SENSOR);
+        assertEquals(0, player.getAllContactCount(), "All contacts have ended");
+        assertTrue(player.hasLeftSupportSinceLaunch(),
+            "Ending the final active contact must set leftSupportSinceLaunch to true");
+
+        world.dispose();
+    }
+
+    // 21. Jumping from floor while touching wall does not count as complete physical departure
+    @Test
+    public void test21_JumpingFromFloorWhileTouchingWallDoesNotCountAsCompleteDeparture() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+
+        // Grounded jump launched
+        assertTrue(player.jump());
+        assertTrue(player.isJumpConsumed());
+
+        // Floor detachment
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+
+        // Advance physics frame while still touching wall
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertFalse(player.hasLeftSupportSinceLaunch(),
+            "Jumping from floor while touching wall must not be marked departed after physics step");
+
+        world.dispose();
+    }
+
+    // 22. Switching gravity toward that wall without complete departure does not reset jump latch
+    @Test
+    public void test22_SwitchingGravityTowardWallWithoutCompleteDepartureDoesNotResetLatch() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+        assertTrue(player.jump());
+
+        // Floor ends, wall remains
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertFalse(player.hasLeftSupportSinceLaunch());
+
+        // Gravity switches to LEFT toward the contacting wall
+        player.onGravityDirectionChanged(Direction.LEFT);
+        assertEquals(Direction.LEFT, player.getSupportDirection());
+        assertTrue(player.isGrounded(), "Player is touching the left wall");
+
+        // Physics step evaluates
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // Assert: Latch MUST remain consumed because complete departure never occurred!
+        assertTrue(player.isJumpConsumed(),
+            "Jump latch must remain consumed; corner gravity shift cannot reset latch without departure");
+        assertFalse(player.jump(),
+            "Corner jump exploit must be rejected");
+
+        world.dispose();
+    }
+
+    // 23. A coyote jump while touching another surface does not incorrectly initialize departure flag
+    @Test
+    public void test23_CoyoteJumpWhileTouchingAnotherSurfaceInitializesDepartureToFalse() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        // Start grounded on DOWN floor
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // Walk off floor, but touch a side wall
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactBegin(FixtureType.PLAYER_RIGHT_SENSOR);
+
+        // Player is in coyote window along DOWN gravity
+        assertTrue(player.isCoyoteActive(), "Coyote timer must be active along DOWN");
+        assertEquals(1, player.getAllContactCount(), "Touching right wall");
+
+        // Coyote jump executes
+        assertTrue(player.jump(), "Coyote jump succeeds");
+        assertTrue(player.isJumpConsumed(), "Jump is consumed");
+
+        // Assert: leftSupportSinceLaunch must be FALSE because player is still touching right wall!
+        assertFalse(player.hasLeftSupportSinceLaunch(),
+            "Coyote jump while touching another surface must initialize leftSupportSinceLaunch to false");
+
+        world.dispose();
+    }
+
+    // 24. A contact callback cannot reset jumpConsumed
+    @Test
+    public void test24_ContactCallbackCannotResetJumpConsumed() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertTrue(player.jump());
+        assertTrue(player.isJumpConsumed());
+
+        // Genuine departure into air
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertTrue(player.hasLeftSupportSinceLaunch());
+
+        // Contact callback fires (landing begins)
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+
+        // ASSERT: IMMEDIATELY after contact callback, jumpConsumed MUST STILL BE TRUE!
+        assertTrue(player.isJumpConsumed(),
+            "Contact callback onSensorContactBegin must NEVER reset jumpConsumed directly");
+
+        // Now physics step runs at fixed boundary
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // ASSERT: Latch resets at fixed physics step boundary
+        assertFalse(player.isJumpConsumed(),
+            "Latch must reset exclusively at the fixed physics-step boundary");
+
+        world.dispose();
+    }
+
+    // 25. A legitimate landing after complete departure resets the latch at a fixed physics-step boundary
+    @Test
+    public void test25_LegitimateLandingAfterCompleteDepartureResetsLatchAtPhysicsStepBoundary() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertTrue(player.jump());
+
+        // Full departure
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertEquals(0, player.getAllContactCount());
+        assertTrue(player.hasLeftSupportSinceLaunch());
+
+        // Fly and land on new surface
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertTrue(player.isJumpConsumed(), "Callback cannot reset latch");
+
+        // Physics step boundary
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertFalse(player.isJumpConsumed(), "Latch reset on grounded physics step");
+        assertTrue(player.jump(), "Fresh jump succeeds after legitimate landing");
+
+        world.dispose();
+    }
+
+    // 26. A buffered jump executes after a legitimate landing
+    @Test
+    public void test26_BufferedJumpExecutesAfterLegitimateLanding() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 5.0f);
+
+        // Airborne player with complete departure
+        assertEquals(0, player.getAllContactCount());
+        assertTrue(player.hasLeftSupportSinceLaunch());
+
+        // Buffer jump 50ms before landing
+        player.jump();
+        assertTrue(player.isJumpBuffered());
+        for (int i = 0; i < 3; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+        }
+        assertTrue(player.isJumpBuffered());
+
+        // Legitimate landing
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+
+        // Next physics step executes buffered jump
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertTrue(player.isJumpConsumed(), "Buffered jump executed");
+        assertFalse(player.isJumpBuffered(), "Buffer consumed");
+        assertEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
+
+        world.dispose();
+    }
+
+    // 27. A buffered jump cannot exploit an illegitimate corner contact transition
+    @Test
+    public void test27_BufferedJumpCannotExploitIllegitimateCornerTransition() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        // Corner contact
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertTrue(player.jump());
+
+        // Floor ends, wall remains
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertFalse(player.hasLeftSupportSinceLaunch());
+
+        // Player buffers a jump while sliding against wall
+        player.jump();
+        assertTrue(player.isJumpBuffered());
+
+        // Gravity switches to LEFT toward wall
+        player.onGravityDirectionChanged(Direction.LEFT);
+
+        // Physics step evaluates
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // ASSERT: Buffered jump must NOT execute because complete departure never occurred!
+        assertTrue(player.isJumpConsumed(), "Latch remains consumed");
+        assertNotEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().x, EPS,
+            "Buffered jump cannot launch off illegitimate corner transition");
+
+        world.dispose();
+    }
+
+    // 28. Existing four-direction gravity and jump regressions remain intact
+    @Test
+    public void test28_ExistingFourDirectionGravityAndJumpRegressionsRemainIntact() {
+        World world = new World(new Vector2(0f, 0f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 5.0f);
+
+        Direction[] dirs = { Direction.DOWN, Direction.UP, Direction.LEFT, Direction.RIGHT };
+        FixtureType[] sensors = {
+            FixtureType.PLAYER_BOTTOM_SENSOR,
+            FixtureType.PLAYER_TOP_SENSOR,
+            FixtureType.PLAYER_LEFT_SENSOR,
+            FixtureType.PLAYER_RIGHT_SENSOR
+        };
+
+        for (int i = 0; i < 4; i++) {
+            Direction dir = dirs[i];
+            FixtureType sensor = sensors[i];
+
+            player.onGravityDirectionChanged(dir);
+            player.onSensorContactBegin(sensor);
+            player.stepPhysics(GameConfig.TIME_STEP);
+            assertTrue(player.isGrounded(), "Grounded along " + dir);
+            assertTrue(player.jump(), "Jump along " + dir);
+
+            player.onSensorContactEnd(sensor);
+            assertEquals(0, player.getAllContactCount());
+            assertTrue(player.hasLeftSupportSinceLaunch());
+
+            // Land
+            player.onSensorContactBegin(sensor);
+            player.stepPhysics(GameConfig.TIME_STEP);
+            assertFalse(player.isJumpConsumed(), "Latch resets along " + dir);
+            player.onSensorContactEnd(sensor);
+        }
+
+        world.dispose();
+    }
+
+    // 29. Coyote jump succeeds at the last eligible step boundary (5 steps elapsed = 83.33ms < 100ms)
+    @Test
+    public void test29_CoyoteTime_SucceedsAtLastEligibleStepBoundary() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        // Ground player
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertTrue(player.isGrounded());
+
+        // Walk off ledge into air
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertFalse(player.isGrounded());
+        assertEquals(0, player.getAllContactCount());
+        assertTrue(player.isCoyoteActive());
+
+        // Advance exactly 5 complete physics steps: 5 * (1/60s) = 83.33ms < 100ms
+        for (int i = 0; i < 5; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+        }
+
+        // At the 5th step boundary (last eligible step before 100ms expires)
+        assertTrue(player.isCoyoteActive(), "Coyote timer must still be active after 5 physics steps (~83.33ms)");
+        assertTrue(player.getCoyoteTimer() > 0.0f, "Coyote timer must be strictly greater than 0");
+        assertTrue(player.isJumpEligible(), "Player must be jump eligible at 5th step boundary");
+
+        // Execute jump request at this last eligible boundary
+        assertTrue(player.jump(), "Jump request at 5th step boundary must succeed");
+        assertTrue(player.isJumpConsumed(), "Latch must be consumed");
+        assertEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
+
+        world.dispose();
+    }
+
+    // 30. Coyote jump fails immediately after six complete timer-decrement steps (6 * 1/60s = 100.0ms)
+    @Test
+    public void test30_CoyoteTime_FailsImmediatelyAfterSixCompleteTimerDecrementSteps() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        // Ground player
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertTrue(player.isGrounded());
+
+        // Walk off ledge into air
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertEquals(0, player.getAllContactCount());
+
+        // Advance exactly 6 complete physics steps: 6 * (1/60s) = 100.0ms (window fully expired)
+        for (int i = 0; i < 6; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+        }
+
+        // After 6 complete timer-decrement steps, coyote window MUST be expired
+        assertFalse(player.isCoyoteActive(), "Coyote timer must be expired after 6 complete timer-decrement steps");
+        assertEquals(0.0f, player.getCoyoteTimer(), EPS, "Coyote timer must be exactly 0.0f");
+        assertFalse(player.isJumpEligible(), "Player cannot be jump eligible after 6 complete timer-decrement steps");
+
+        // Attempt jump request after 6 complete steps
+        assertFalse(player.jump(), "Jump request after 6 complete timer-decrement steps must fail");
+        assertFalse(player.isJumpConsumed(), "Jump was not launched so latch must not be consumed");
+        assertNotEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
+
+        world.dispose();
+    }
+
+    // 31. Coyote timer cannot become negative under indefinite physics stepping
+    @Test
+    public void test31_CoyoteTime_TimerCannotBecomeNegative() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+
+        // Step through 120 physics steps (2 full seconds)
+        for (int step = 1; step <= 120; step++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+            float timer = player.getCoyoteTimer();
+            assertFalse(Float.isNaN(timer), "Coyote timer must not be NaN at step " + step);
+            assertTrue(timer >= 0.0f, "Coyote timer must never be negative at step " + step + ", was: " + timer);
+        }
+        assertEquals(0.0f, player.getCoyoteTimer(), EPS);
+
+        world.dispose();
+    }
+
+    // 32. Render-frame delta patterns do not alter fixed-step coyote boundary
+    @Test
+    public void test32_CoyoteTime_RenderFrameDeltaPatternsDoNotChangeBoundary() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+
+        // Simulate 5 fixed steps
+        for (int i = 0; i < 5; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+        }
+        assertTrue(player.isCoyoteActive(), "Must be active at 5th step regardless of render delta patterns");
+
+        // 6th fixed step
+        player.stepPhysics(GameConfig.TIME_STEP);
+        assertFalse(player.isCoyoteActive(), "Must expire precisely after 6th fixed step");
+        assertEquals(0.0f, player.getCoyoteTimer(), EPS);
+
+        world.dispose();
+    }
+
+    // 33. Buffered jump executes when landing occurs within the defined six-step window (on step 6)
+    @Test
+    public void test33_JumpBuffer_ExecutesWhenLandingOccursWithinSixStepWindow() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 5.0f);
+
+        // Airborne player buffers a jump
+        assertFalse(player.isGrounded());
+        assertFalse(player.jump(), "Jump while airborne cannot launch immediately");
+        assertTrue(player.isJumpBuffered(), "Jump must be buffered");
+
+        // Advance 5 complete physics steps airborne (5 * 16.6667ms = 83.33ms)
+        for (int i = 0; i < 5; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+            assertTrue(player.isJumpBuffered(), "Buffer must remain active during airborne step " + (i + 1));
+        }
+
+        // Player touches ground right before step 6 (touchdown at t = 5 steps, landing evaluated in step 6)
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertTrue(player.isGrounded());
+
+        // Step 6 executes: landing occurs within the 6-step window (at t = 100ms)
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // ASSERT: Buffered jump must execute on step 6
+        assertTrue(player.isJumpConsumed(), "Buffered jump must execute when landing occurs on the 6th step");
+        assertFalse(player.isJumpBuffered(), "Buffer must be cleared upon execution");
+        assertEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS,
+            "Vertical velocity must match JUMP_VELOCITY from buffered jump execution");
+
+        world.dispose();
+    }
+
+    // 34. Buffer that expires after six complete timer-decrement steps cannot execute on a later landing
+    @Test
+    public void test34_JumpBuffer_ExpiresAfterSixCompleteTimerDecrementSteps() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 5.0f);
+
+        // Airborne player buffers a jump
+        assertFalse(player.jump());
+        assertTrue(player.isJumpBuffered());
+
+        // Advance 6 complete physics steps airborne without landing (6 * 1/60s = 100.0ms)
+        for (int i = 0; i < 6; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+        }
+
+        // Buffer must now be fully expired after 6 complete timer-decrement steps
+        assertFalse(player.isJumpBuffered(), "Jump buffer must expire after 6 complete timer-decrement steps");
+        assertEquals(0.0f, player.getJumpBufferTimer(), EPS, "Jump buffer timer must be 0.0f");
+
+        // Player lands on step 7 (after window expiration)
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // ASSERT: Expired buffer must NOT execute jump
+        assertFalse(player.isJumpConsumed(), "Expired buffer must not execute jump on later landing");
+        assertNotEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
+
+        world.dispose();
+    }
+
+    // 35. Jump buffer is consumed exactly once and does not repeat
+    @Test
+    public void test35_JumpBuffer_ConsumedExactlyOnce() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 5.0f);
+
+        // Buffer jump while airborne
+        player.jump();
+        assertTrue(player.isJumpBuffered());
+
+        // Land on step 2
+        player.stepPhysics(GameConfig.TIME_STEP);
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // First execution occurs
+        assertTrue(player.isJumpConsumed());
+        assertFalse(player.isJumpBuffered());
+        assertEquals(0.0f, player.getJumpBufferTimer(), EPS);
+
+        // Simulate subsequent grounded steps (steps 3, 4, 5)
+        // Reset velocity to 0 to detect any duplicate launches
+        player.getBody().setLinearVelocity(0f, 0f);
+        for (int i = 0; i < 3; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+            assertEquals(0f, player.getBody().getLinearVelocity().y, EPS,
+                "Buffer must not trigger any secondary jump launches");
+        }
+
+        world.dispose();
+    }
+
+    // 36. Illegitimate corner contact transition cannot trigger a buffered jump
+    @Test
+    public void test36_JumpBuffer_IllegitimateCornerTransitionCannotTriggerBufferedJump() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 5.0f);
+
+        // Touching floor and wall
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+        player.onSensorContactBegin(FixtureType.PLAYER_LEFT_SENSOR);
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // Jump from corner (latch consumed)
+        assertTrue(player.jump());
+        assertTrue(player.isJumpConsumed());
+
+        // Floor contact ends, but wall contact persists
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR);
+        assertFalse(player.hasLeftSupportSinceLaunch(), "Still touching wall, so leftSupportSinceLaunch must be false");
+
+        // Buffer jump while airborne
+        assertFalse(player.jump());
+        assertTrue(player.isJumpBuffered());
+
+        // Gravity switches to wall (LEFT) without complete detachment
+        player.onGravityDirectionChanged(Direction.LEFT);
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // ASSERT: Latch remains consumed, buffered jump cannot execute
+        assertTrue(player.isJumpConsumed(), "Latch must remain consumed");
+        assertNotEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().x, EPS,
+            "Buffered jump cannot execute across illegitimate corner transition");
+
+        world.dispose();
+    }
+
+    // 37. Exact timer ordering: buffered jump evaluated before buffer timer decrement
+    @Test
+    public void test37_ExactTimerOrdering_BufferedJumpEvaluatedBeforeTimerDecrement() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 5.0f);
+
+        // Buffer jump
+        player.jump();
+        assertEquals(GameConfig.JUMP_BUFFER_DURATION, player.getJumpBufferTimer(), EPS);
+
+        // After 5 steps airborne, buffer timer has 1 step remaining (16.67ms)
+        for (int i = 0; i < 5; i++) {
+            player.stepPhysics(GameConfig.TIME_STEP);
+        }
+        assertTrue(player.getJumpBufferTimer() > 0.0f, "Buffer timer has ~16.67ms remaining before step 6");
+
+        // Land on ground before step 6
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR);
+
+        // Step 6 evaluates buffered jump first, then decrements
+        player.stepPhysics(GameConfig.TIME_STEP);
+
+        // Verify buffered jump fired on step 6
+        assertTrue(player.isJumpConsumed(), "Step 6 evaluated buffered jump before decrementing timer to zero");
+        assertEquals(0.0f, player.getJumpBufferTimer(), EPS);
+        assertEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
+
+        world.dispose();
+    }
+
+    // 38. Real Box2D physics lifecycle: landing detected during 6th World.step() executes buffered jump in onPostStep
+    @Test
+    public void test38_RealPhysicsLifecycle_LandingOnSixthStepExecutesBufferedJump() {
+        PhysicsController pc = new PhysicsController();
+        EntityManager em = new EntityManager();
+        pc.setStepListener(em);
+
+        // Ground platform top surface is at y = 1.3m (y=0.5m, h=0.8m).
+        // Under standard gravity (-9.81 m/s^2), spawning at spawnY = 1.565m with vy = -2.0m/s:
+        // Steps 1..5: player descends through air without sensor touching ground.
+        // Step 6: bottom sensor intersects ground platform inside World.step()!
+        //   -> GameContactListener.beginContact fires during World.step()!
+        //   -> EntityManager.onPostStep() invokes Player.onPostPhysicsStep()!
+        //   -> Buffered jump executes on step 6 at the deterministic post-physics boundary!
+
+        Player player = Player.create(pc.getBodyFactory(), 5.0f, 1.565f);
+        em.addEntity(player);
+        player.getBody().setLinearVelocity(0f, -2.0f);
+
+        // Buffer jump while airborne
+        assertFalse(player.jump(), "Airborne jump cannot launch immediately");
+        assertTrue(player.isJumpBuffered(), "Jump must be buffered");
+
+        // Advance 5 complete physics steps via PhysicsController.update()
+        for (int i = 0; i < 5; i++) {
+            pc.update(GameConfig.TIME_STEP);
+            assertFalse(player.isGrounded(), "Must remain airborne at step " + (i + 1));
+            assertTrue(player.isJumpBuffered(), "Buffer must remain active at step " + (i + 1));
+        }
+
+        // 6th physics step: player reaches ground, Box2D detects collision during world.step()
+        pc.update(GameConfig.TIME_STEP);
+
+        // ASSERT: During step 6, GameContactListener detected contact, and onPostPhysicsStep executed the buffered jump!
+        assertTrue(player.isGrounded(), "Player must be grounded from real Box2D collision on step 6");
+        assertTrue(player.isJumpConsumed(), "Buffered jump must have executed during step 6 post-physics");
+        assertFalse(player.isJumpBuffered(), "Jump buffer must be cleared upon execution");
+        assertEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS,
+            "Linear velocity must be set to JUMP_VELOCITY opposite gravity");
+
+        pc.dispose();
+    }
+
+    // 39. Real Box2D physics lifecycle: landing detected during 7th World.step() rejects expired buffer
+    @Test
+    public void test39_RealPhysicsLifecycle_LandingOnSeventhStepRejectsExpiredBuffer() {
+        PhysicsController pc = new PhysicsController();
+        EntityManager em = new EntityManager();
+        pc.setStepListener(em);
+
+        // Spawning at spawnY = 1.580m with vy = -2.0 m/s under standard gravity:
+        // Steps 1..6: player descends through the air (still airborne at end of step 6).
+        // 6 complete steps of timer decrement occur in onPostPhysicsStep -> buffer expires (reaches 0.0f)!
+        // Step 7: player reaches ground and touches during World.step().
+        //   -> Landing occurs, but buffer has expired!
+
+        Player player = Player.create(pc.getBodyFactory(), 5.0f, 1.580f);
+        em.addEntity(player);
+        player.getBody().setLinearVelocity(0f, -2.0f);
+
+        // Buffer jump while airborne
+        assertFalse(player.jump());
+        assertTrue(player.isJumpBuffered());
+
+        // Advance 6 complete physics steps in the air
+        for (int i = 0; i < 6; i++) {
+            pc.update(GameConfig.TIME_STEP);
+            assertFalse(player.isGrounded(), "Must remain airborne at step " + (i + 1));
+        }
+
+        // Buffer must be expired after 6 complete steps
+        assertFalse(player.isJumpBuffered(), "Buffer must have expired after 6 complete steps");
+        assertEquals(0.0f, player.getJumpBufferTimer(), EPS);
+
+        // 7th physics step: player reaches ground during world.step()
+        pc.update(GameConfig.TIME_STEP);
+
+        // ASSERT: Player landed, but expired buffer MUST NOT execute
+        assertTrue(player.isGrounded(), "Player landed on step 7");
+        assertFalse(player.isJumpConsumed(), "Expired buffer must not execute jump");
+        assertNotEquals(Player.JUMP_VELOCITY, player.getBody().getLinearVelocity().y, EPS);
+
+        pc.dispose();
+    }
+
+    // 40. Real Box2D physics lifecycle: pre-step and post-step lifecycle separation
+    @Test
+    public void test40_RealPhysicsLifecycle_PrePostStepSeparationIntegrity() {
+        PhysicsController pc = new PhysicsController();
+        EntityManager em = new EntityManager();
+        pc.setStepListener(em);
+
+        Player player = Player.create(pc.getBodyFactory(), 5.0f, 1.565f);
+        em.addEntity(player);
+        player.getBody().setLinearVelocity(0f, -2.0f);
+        player.jump(); // buffered
+
+        // Verify that onPrePhysicsStep alone does not execute buffered jump without contact
+        player.onPrePhysicsStep(GameConfig.TIME_STEP);
+        assertFalse(player.isJumpConsumed());
+        assertTrue(player.isJumpBuffered());
+
+        // Advance through full lifecycle to verify post-physics step ownership
+        for (int i = 0; i < 6; i++) {
+            pc.update(GameConfig.TIME_STEP);
+        }
+        assertTrue(player.isJumpConsumed(), "Jump executed post-step upon landing");
+
+        pc.dispose();
     }
 }
