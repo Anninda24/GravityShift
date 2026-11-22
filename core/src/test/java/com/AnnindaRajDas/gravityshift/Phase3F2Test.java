@@ -128,13 +128,13 @@ public class Phase3F2Test {
         assertEquals(expectedHeightPortrait, viewport.getWorldHeight(), 0.01f);
     }
 
-    // 4. 20:9 and 21:9 modern mobile/ultrawide layouts
+    // 4. 19.53:9 (realme RMX5555) and 21:9 modern mobile/ultrawide layouts
     @Test
     public void test04_ModernMobileUltrawideLayouts() {
         OrthographicCamera camera = new OrthographicCamera();
         ExtendViewport viewport = new ExtendViewport(GameConfig.MIN_WORLD_WIDTH, GameConfig.MIN_WORLD_HEIGHT, camera);
 
-        // 20:9 realme RMX5555 physical screen (2344x1080)
+        // 19.53:9 realme RMX5555 physical screen (2344x1080, aspect ratio ~2.1704)
         viewport.update(2344, 1080, false);
         assertEquals(12.0f, viewport.getWorldHeight(), EPS);
         float expectedWidthRealme = 12.0f * (2344.0f / 1080.0f);
