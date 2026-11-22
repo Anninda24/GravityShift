@@ -22,15 +22,20 @@ public class Player extends Entity {
     // Default Dimensions in world meters (~human scale)
     public static final float DEFAULT_WIDTH = 0.8f;
     public static final float DEFAULT_HEIGHT = 1.4f;
+    public static final float CHAMFER_RADIUS = 0.1f; // Corner chamfer offset to eliminate tile-seam snagging
 
     // Physical Material Parameters
     public static final float DENSITY = 1.2f;
-    public static final float FRICTION = 0.4f;
+    public static final float FRICTION = 0.2f; // Calibrated low to prevent wall-sticking while maintaining ground control
     public static final float RESTITUTION = 0.0f; // No bounciness for responsive platforming
 
     // Movement Parameters
     public static final float MOVE_SPEED = 5.0f;     // Horizontal walking/running speed in m/s
     public static final float JUMP_VELOCITY = 6.5f;  // Initial vertical jump launch velocity in m/s
+
+    // Jump Timing Parameters (Fixed Timestep Physics Duration)
+    public static final float COYOTE_DURATION = GameConfig.COYOTE_DURATION;
+    public static final float JUMP_BUFFER_DURATION = GameConfig.JUMP_BUFFER_DURATION;
 
     private final float width;
     private final float height;
@@ -42,7 +47,11 @@ public class Player extends Entity {
     private int leftContacts = 0;
     private int rightContacts = 0;
 
+    // Jump State Machine & Timers
     private boolean jumpConsumed = false;
+    private boolean leftSupportSinceLaunch = true;
+    private float coyoteTimer = 0.0f;
+    private float jumpBufferTimer = 0.0f;
     private float moveDirection = 0.0f;
 
     /**
@@ -74,6 +83,7 @@ public class Player extends Entity {
         Body body = bodyFactory.createPlayerBody(
             spawnX, spawnY,
             DEFAULT_WIDTH, DEFAULT_HEIGHT,
+            CHAMFER_RADIUS,
             DENSITY, FRICTION, RESTITUTION
         );
         return new Player(body, DEFAULT_WIDTH, DEFAULT_HEIGHT);
@@ -105,21 +115,77 @@ public class Player extends Entity {
     }
 
     /**
-     * Executes a jump opposite to the active gravity direction if the player is grounded,
-     * not disposed, and has not already consumed the jump for the current grounded period.
-     * Preserves current tangential velocity perpendicular to gravity.
+     * Advances physics-step timers (coyote time, jump buffer) and processes jump state transitions.
+     * Invoked once per discrete physics step (fixed 1/60s).
      *
-     * @return true if jump was successfully executed, false otherwise
+     * @param stepDelta duration of the discrete physics step in seconds
      */
-    public boolean jump() {
+    public void stepPhysics(float stepDelta) {
+        if (isDisposed() || body == null) {
+            return;
+        }
+
+        if (!Float.isFinite(stepDelta) || stepDelta <= 0.0f) {
+            return;
+        }
+
+        // 1. Support tracking and latch reset
+        if (isGrounded()) {
+            coyoteTimer = COYOTE_DURATION;
+            if (leftSupportSinceLaunch) {
+                jumpConsumed = false;
+            }
+        } else {
+            if (getGroundContacts() == 0) {
+                leftSupportSinceLaunch = true;
+            }
+            if (coyoteTimer > 0.0f) {
+                coyoteTimer = Math.max(0.0f, coyoteTimer - stepDelta);
+            }
+        }
+
+        // 2. Decrement jump input buffer timer
+        if (jumpBufferTimer > 0.0f) {
+            jumpBufferTimer = Math.max(0.0f, jumpBufferTimer - stepDelta);
+        }
+
+        // 3. Process buffered jump execution
+        if (jumpBufferTimer > 0.0f && canLaunchJump()) {
+            executeJump();
+        }
+    }
+
+    @Override
+    public void onPrePhysicsStep(float stepDelta) {
+        stepPhysics(stepDelta);
+    }
+
+    /**
+     * Evaluates whether the player is currently eligible to launch a jump.
+     * A jump is eligible if:
+     * 1. The player is not disposed and has a valid physics body.
+     * 2. The jump latch is not consumed (!jumpConsumed).
+     * 3. Either the player is currently grounded (contacts > 0 along supportDirection),
+     *    OR coyote time is active (coyoteTimer > 0).
+     *
+     * @return true if eligible to jump, false otherwise
+     */
+    public boolean isJumpEligible() {
         if (isDisposed() || body == null) {
             return false;
         }
+        return !jumpConsumed && (isGrounded() || coyoteTimer > 0.0f);
+    }
 
-        if (!isGrounded() || jumpConsumed) {
-            return false;
-        }
+    public boolean canLaunchJump() {
+        return isJumpEligible();
+    }
 
+    /**
+     * Executes the directional jump launch opposite to the active support direction.
+     * Sets jumpConsumed = true, leftSupportSinceLaunch = false (if grounded), and clears timers.
+     */
+    private void executeJump() {
         Vector2 currentVelocity = body.getLinearVelocity();
 
         switch (supportDirection) {
@@ -130,7 +196,31 @@ public class Player extends Entity {
         }
 
         this.jumpConsumed = true;
-        return true;
+        this.leftSupportSinceLaunch = (getGroundContacts() == 0);
+        this.coyoteTimer = 0.0f;
+        this.jumpBufferTimer = 0.0f;
+    }
+
+    /**
+     * Requests a jump.
+     * Retains the jump input request in the 100ms buffer.
+     * If currently eligible, executes the jump immediately on the current physics state.
+     *
+     * @return true if jump was executed immediately, false if buffered or rejected
+     */
+    public boolean jump() {
+        if (isDisposed() || body == null) {
+            return false;
+        }
+
+        this.jumpBufferTimer = JUMP_BUFFER_DURATION;
+
+        if (canLaunchJump()) {
+            executeJump();
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -211,7 +301,8 @@ public class Player extends Entity {
      * Callback invoked by GameContactListener when a directional sensor enters contact
      * with a valid supporting surface (GROUND, WALL, CEILING).
      * Increments the sensor counter and resets the jump latch ONLY when transitioning
-     * from 0 to 1 contacts along the active support direction.
+     * from 0 to 1 contacts along the active support direction if the player genuinely
+     * left support since the previous jump launch.
      *
      * @param sensorType the sensor fixture type that made contact
      */
@@ -226,7 +317,10 @@ public class Player extends Entity {
         }
 
         if (dir == supportDirection && getContactCount(dir) == 0) {
-            jumpConsumed = false;
+            if (leftSupportSinceLaunch) {
+                jumpConsumed = false;
+            }
+            coyoteTimer = COYOTE_DURATION;
         }
 
         incrementContact(dir);
@@ -236,6 +330,7 @@ public class Player extends Entity {
      * Callback invoked by GameContactListener when a directional sensor leaves contact
      * with a supporting surface.
      * Decrements the corresponding contact counter with underflow protection.
+     * Sets leftSupportSinceLaunch = true and starts the coyote window if jump was not consumed.
      *
      * @param sensorType the sensor fixture type that broke contact
      */
@@ -250,6 +345,15 @@ public class Player extends Entity {
         }
 
         decrementContact(dir);
+
+        if (dir == supportDirection && getContactCount(dir) == 0) {
+            leftSupportSinceLaunch = true;
+            if (!jumpConsumed) {
+                coyoteTimer = COYOTE_DURATION;
+            } else {
+                coyoteTimer = 0.0f;
+            }
+        }
     }
 
     public void onGroundContactBegin() {
@@ -352,6 +456,51 @@ public class Player extends Entity {
         return jumpConsumed;
     }
 
+    /**
+     * Returns whether the player has genuinely left support since the previous jump launch.
+     *
+     * @return true if support was left since launch, false otherwise
+     */
+    public boolean hasLeftSupportSinceLaunch() {
+        return leftSupportSinceLaunch;
+    }
+
+    /**
+     * Returns the remaining coyote time in seconds.
+     *
+     * @return remaining coyote time
+     */
+    public float getCoyoteTimer() {
+        return coyoteTimer;
+    }
+
+    /**
+     * Returns whether coyote time is currently active.
+     *
+     * @return true if coyote window is open (> 0), false otherwise
+     */
+    public boolean isCoyoteActive() {
+        return coyoteTimer > 0.0f;
+    }
+
+    /**
+     * Returns the remaining jump buffer time in seconds.
+     *
+     * @return remaining jump buffer time
+     */
+    public float getJumpBufferTimer() {
+        return jumpBufferTimer;
+    }
+
+    /**
+     * Returns whether a jump input is currently buffered.
+     *
+     * @return true if a jump is buffered (> 0), false otherwise
+     */
+    public boolean isJumpBuffered() {
+        return jumpBufferTimer > 0.0f;
+    }
+
     @Override
     public void dispose() {
         super.dispose();
@@ -361,6 +510,9 @@ public class Player extends Entity {
             leftContacts = 0;
             rightContacts = 0;
             jumpConsumed = false;
+            leftSupportSinceLaunch = true;
+            coyoteTimer = 0.0f;
+            jumpBufferTimer = 0.0f;
             moveDirection = 0.0f;
             supportDirection = Direction.DOWN;
         }

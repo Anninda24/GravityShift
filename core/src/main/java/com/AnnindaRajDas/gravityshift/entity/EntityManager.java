@@ -61,11 +61,35 @@ public class EntityManager implements Disposable, PhysicsStepListener {
         if (disposed) {
             return;
         }
+        flushPendingAdditions();
         for (int i = 0; i < entities.size; i++) {
             Entity entity = entities.get(i);
             if (!entity.isDisposed()) {
                 entity.capturePreStepTransform();
+                entity.onPrePhysicsStep(com.AnnindaRajDas.gravityshift.config.GameConfig.TIME_STEP);
             }
+        }
+    }
+
+    private void flushPendingAdditions() {
+        if (pendingAdditions.size > 0) {
+            for (int i = 0; i < pendingAdditions.size; i++) {
+                Entity pending = pendingAdditions.get(i);
+                if (pending.isDisposed()) {
+                    continue;
+                }
+                if (pending.isMarkedForRemoval()) {
+                    pending.dispose();
+                    if (!pending.isDisposed()) {
+                        if (!entities.contains(pending, true)) {
+                            entities.add(pending);
+                        }
+                    }
+                } else if (!entities.contains(pending, true)) {
+                    entities.add(pending);
+                }
+            }
+            pendingAdditions.clear();
         }
     }
 
@@ -78,6 +102,7 @@ public class EntityManager implements Disposable, PhysicsStepListener {
             Entity entity = entities.get(i);
             if (!entity.isDisposed()) {
                 entity.capturePostStepTransform();
+                entity.onPostPhysicsStep(com.AnnindaRajDas.gravityshift.config.GameConfig.TIME_STEP);
             }
         }
     }
@@ -96,27 +121,7 @@ public class EntityManager implements Disposable, PhysicsStepListener {
         }
 
         // 1. Flush pending additions into active entity collection safely
-        if (pendingAdditions.size > 0) {
-            for (int i = 0; i < pendingAdditions.size; i++) {
-                Entity pending = pendingAdditions.get(i);
-                if (pending.isDisposed()) {
-                    // Already disposed: do not add, skip
-                    continue;
-                }
-                if (pending.isMarkedForRemoval()) {
-                    pending.dispose();
-                    // If disposal deferred because world was locked, preserve in active collection
-                    if (!pending.isDisposed()) {
-                        if (!entities.contains(pending, true)) {
-                            entities.add(pending);
-                        }
-                    }
-                } else if (!entities.contains(pending, true)) {
-                    entities.add(pending);
-                }
-            }
-            pendingAdditions.clear();
-        }
+        flushPendingAdditions();
 
         // 2. Iterate backwards for safe in-place removal and update
         for (int i = entities.size - 1; i >= 0; i--) {

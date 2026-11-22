@@ -52,6 +52,26 @@ public abstract class Entity implements Disposable {
     public abstract void update(float delta);
 
     /**
+     * Hook invoked immediately prior to each discrete Box2D physics simulation step.
+     * Subclasses override to update fixed-timestep physics timers, execute buffered actions,
+     * or apply step-synchronized forces.
+     *
+     * @param stepDelta duration of the discrete physics step in seconds (e.g. GameConfig.TIME_STEP)
+     */
+    public void onPrePhysicsStep(float stepDelta) {
+        // Default no-op for base entities
+    }
+
+    /**
+     * Hook invoked immediately after each discrete Box2D physics simulation step.
+     *
+     * @param stepDelta duration of the discrete physics step in seconds
+     */
+    public void onPostPhysicsStep(float stepDelta) {
+        // Default no-op for base entities
+    }
+
+    /**
      * Returns a copy of the center of mass position of the entity in world meters.
      * Uses defensive copying (.cpy()) to prevent external mutation of Box2D's internal Vector2.
      *

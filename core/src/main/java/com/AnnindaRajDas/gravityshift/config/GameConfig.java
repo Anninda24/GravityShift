@@ -39,6 +39,10 @@ public final class GameConfig {
     public static final float DEFAULT_FRICTION = 0.4f;
     public static final float DEFAULT_RESTITUTION = 0.1f;
 
+    // Player Jump Timing Constants (Fixed Timestep Physics Duration)
+    public static final float COYOTE_DURATION = 0.100f;       // 100ms coyote time window
+    public static final float JUMP_BUFFER_DURATION = 0.100f;   // 100ms jump input buffer window
+
     // Debugging Flags
     public static final boolean DEBUG_PHYSICS = true;
 }

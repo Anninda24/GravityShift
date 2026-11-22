@@ -210,7 +210,7 @@ public class BodyFactory {
     }
 
     /**
-     * Creates a dynamic Box2D body for the Player with a solid torso fixture (PLAYER_BODY)
+     * Creates a dynamic Box2D body for the Player with a chamfered polygon torso fixture (PLAYER_BODY)
      * and four directional support sensors (PLAYER_BOTTOM_SENSOR, PLAYER_TOP_SENSOR,
      * PLAYER_LEFT_SENSOR, PLAYER_RIGHT_SENSOR).
      *
@@ -225,12 +225,33 @@ public class BodyFactory {
      */
     public Body createPlayerBody(float spawnX, float spawnY, float width, float height,
                                  float density, float friction, float restitution) {
+        return createPlayerBody(spawnX, spawnY, width, height, 0.1f, density, friction, restitution);
+    }
+
+    /**
+     * Creates a dynamic Box2D body for the Player with a custom corner chamfer radius.
+     *
+     * @param spawnX      bottom-left X coordinate in world meters
+     * @param spawnY      bottom-left Y coordinate in world meters
+     * @param width       player width in world meters
+     * @param height      player height in world meters
+     * @param chamfer     corner chamfer offset in world meters
+     * @param density     mass density in kg/m^2
+     * @param friction    surface friction coefficient
+     * @param restitution bounciness coefficient
+     * @return the created dynamic Box2D body
+     */
+    public Body createPlayerBody(float spawnX, float spawnY, float width, float height, float chamfer,
+                                 float density, float friction, float restitution) {
         assertWorldNotLocked();
         if (width <= 0 || height <= 0) {
             throw new IllegalArgumentException("Width and height must be positive. Given: " + width + "x" + height);
         }
         if (density <= 0) {
             throw new IllegalArgumentException("Density must be positive for dynamic bodies. Given: " + density);
+        }
+        if (chamfer < 0.0f) {
+            throw new IllegalArgumentException("Chamfer must be non-negative. Given: " + chamfer);
         }
 
         float centerX = spawnX + width / 2.0f;
@@ -249,8 +270,27 @@ public class BodyFactory {
         PolygonShape rightShape = new PolygonShape();
 
         try {
-            // 1. Solid torso fixture
-            bodyShape.setAsBox(width / 2.0f, height / 2.0f);
+            // 1. Solid torso fixture: 8-vertex chamfered polygon to eliminate seam snagging
+            float halfW = width / 2.0f;
+            float halfH = height / 2.0f;
+            float c = Math.min(chamfer, Math.min(halfW / 2.0f, halfH / 2.0f));
+
+            if (c > 0.0f) {
+                float[] vertices = new float[] {
+                    -halfW + c, -halfH,
+                     halfW - c, -halfH,
+                     halfW,     -halfH + c,
+                     halfW,      halfH - c,
+                     halfW - c,  halfH,
+                    -halfW + c,  halfH,
+                    -halfW,      halfH - c,
+                    -halfW,     -halfH + c
+                };
+                bodyShape.set(vertices);
+            } else {
+                bodyShape.setAsBox(halfW, halfH);
+            }
+
             FixtureDef bodyFixtureDef = new FixtureDef();
             bodyFixtureDef.shape = bodyShape;
             bodyFixtureDef.density = density;

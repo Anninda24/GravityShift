@@ -7,6 +7,54 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.9] - Phase 3F.4: Coyote Time & Jump Buffering - 2026-11-22
+
+### Added
+- **100ms Fixed-Timestep Coyote Time (`Player.java`, `GameConfig.java`)**:
+  - Implemented 100ms coyote time window (`COYOTE_DURATION = 0.100f`) permitting jump execution after walking or falling off a ledge.
+  - Advancing strictly using discrete physics timestep slices (`GameConfig.TIME_STEP = 1/60s`) rather than variable render frame deltas, eliminating timer drift across 60Hz, 90Hz, and 120Hz displays.
+  - Coyote eligibility opens when contact count reaches zero without an active jump launch; immediately closes upon jump execution.
+- **100ms Jump Input Buffering (`Player.java`, `GameConfig.java`)**:
+  - Implemented 100ms jump request buffer (`JUMP_BUFFER_DURATION = 0.100f`) retaining jump inputs pressed up to 100ms prior to landing.
+  - Buffered jump executes deterministically on the next valid physics frame upon landing when support and anti-exploit latch criteria are satisfied.
+  - Buffer expires cleanly if the player remains airborne for more than 100ms without reaching support.
+- **Anti-Exploit Jump Latch & Departure Tracking (`Player.java`, `EntityManager.java`)**:
+  - Implemented state-machine tracking `leftSupportSinceLaunch`: transitions to `false` on grounded jump launch, transitions to `true` only when support count reaches zero after departure.
+  - Jump latch (`jumpConsumed`) resets **only** on a grounded frame where `leftSupportSinceLaunch == true`.
+  - Corner contacts and gravity switches are prohibited from manufacturing extra jumps or resetting the consumed latch without genuine physical support departure.
+- **Physics Step Entity Synchronization (`Entity.java`, `EntityManager.java`)**:
+  - Added `onPrePhysicsStep(float stepDelta)` and `onPostPhysicsStep(float stepDelta)` lifecycle hooks to `Entity.java`.
+  - Dispatched from `EntityManager` during discrete physics steps (`PhysicsStepListener`), guaranteeing zero timer drift when render accumulator executes 0, 1, or multiple physics steps per frame.
+  - Integrated pending entity flushing in `onPreStep()` to ensure zero-lag registration for physics simulation.
+- **Automated Verification Suite (`Phase3F4Test.java`)**:
+  - Implemented 18 comprehensive unit and integration tests covering grounded jumps, immediate departure jumps, coyote window success/expiry, buffered jump execution/expiration, latch anti-exploit, airborne jump rejection, gravity switching interactions, render-frame delta pattern invariance, accumulator step variations, four-way gravity compatibility, jump velocity directions, and lifecycle disposal.
+  - All 71 project tests passing (32 in `Phase3F1Test`, 9 in `Phase3F2Test`, 12 in `Phase3F3Test`, 18 in `Phase3F4Test`).
+
+---
+
+## [0.3.8] - Phase 3F.3: Chamfered Player Shape & Friction Tuning - 2026-11-22
+
+### Added
+- **8-Vertex Chamfered Player Polygon (`Player.java`, `BodyFactory.java`)**:
+  - Replaced rectangular collision fixture with an 8-vertex chamfered polygon fixture ($0.8\text{m} \times 1.4\text{m}$, corner chamfer offset $0.1\text{m}$).
+  - Configured 8 counter-clockwise vertices within Box2D's 8-vertex limit (`b2_maxPolygonVertices = 8`):
+    $(-0.3, -0.7)$, $(0.3, -0.7)$, $(0.4, -0.6)$, $(0.4, 0.6)$, $(0.3, 0.7)$, $(-0.3, 0.7)$, $(-0.4, 0.6)$, $(-0.4, -0.6)$.
+  - Preserved strict convexity and counter-clockwise winding order for robust narrowphase GJK/EPA solver stability.
+  - Eliminated tile seam catching/snagging across tiled platforms and corner transitions while preserving exact $0.8\text{m}$ width and $1.4\text{m}$ height bounds.
+- **Support Sensor Alignment & Invariants**:
+  - Preserved all 4 directional support sensors (`BOTTOM`, `TOP`, `LEFT`, `RIGHT`) with flat face spans ($0.6\text{m}$ horizontal, $1.2\text{m}$ vertical) matching the un-beveled edges.
+  - Inset sensors prevent corner cross-talk and false grounding during edge collisions.
+  - Preserved player mass density ($1.2\text{ kg/m}^2$) and `fixedRotation = true`.
+  - Preserved settled player center-of-mass height ($y_{\text{center}} \approx 2.015\text{m}$ atop platform surface $y = 1.3\text{m}$ under DOWN gravity).
+- **Physical Friction Calibration**:
+  - Reduced player fixture friction from $0.4\text{f}$ to $0.2\text{f}$ (`Player.FRICTION = 0.2f`).
+  - Tuned combined Box2D contact friction ($\sqrt{0.2 \times 0.4} \approx 0.283\text{f}$) to prevent wall sticking or drag during vertical descents/wall slides while maintaining crisp, controllable ground traction.
+- **Automated Verification Suite (`Phase3F3Test.java`)**:
+  - Added 12 dedicated automated tests covering 8-vertex polygon geometry, chamfer radius, bounding dimensions, convexity/CCW winding, fixed rotation, density 1.2, friction 0.2, 4 directional sensors, settled coordinates ($y \approx 2.015\text{m}$), wall contact support, and lifecycle invariants.
+  - Confirmed 100% green pass rate across all 53 project tests (32 in `Phase3F1Test`, 9 in `Phase3F2Test`, 12 in `Phase3F3Test`).
+
+---
+
 ## [0.3.7] - Phase 3F.2: Viewport Overhaul - 2026-11-22
 
 ### Added
