@@ -1,11 +1,16 @@
 package com.AnnindaRajDas.gravityshift;
 
+import com.AnnindaRajDas.gravityshift.screen.PlayScreen;
 import com.badlogic.gdx.Game;
 
-/** {@link com.badlogic.gdx.ApplicationListener} implementation shared by all platforms. */
+/**
+ * Root game controller shared across Desktop and Android platforms.
+ * Manages global screen transitions.
+ */
 public class GravityShiftGame extends Game {
+
     @Override
     public void create() {
-        setScreen(new FirstScreen());
+        setScreen(new PlayScreen(this));
     }
 }
