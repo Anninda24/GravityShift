@@ -7,6 +7,28 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.7] - Phase 3F.2: Viewport Overhaul - 2026-11-22
+
+### Added
+- **Dual-Viewport Architecture (`BaseScreen.java`, `PlayScreen.java`)**:
+  - Replaced legacy `FitViewport` with LibGDX `ExtendViewport` for world rendering with minimum 20x12 meter dimensions.
+  - Introduced `ScreenViewport` for UI and future touch controls, mapping 1:1 with screen pixels independent of meters.
+  - Implemented decoupled camera hierarchy: `worldCamera` (meters) and `hudCamera` (pixels).
+  - Defined `MIN_WORLD_WIDTH = 20.0f` and `MIN_WORLD_HEIGHT = 12.0f` in `GameConfig.java`.
+- **Chamber Centering & Symmetric Padding**:
+  - Implemented explicit camera centering on the 20x12 chamber center `(10.0m, 6.0m)` during resize events (`viewport.update(width, height, false)`).
+  - Guarantees the entire minimum chamber remains fully visible without stretching, cropping, or distortion across wide (16:9, 18:9, 20:9, 21:9) and tall (4:3, 1:1, 9:16) aspect ratios.
+  - Extended viewport area displays dark background void rather than scaling world geometry.
+- **HUD Stage & Clean Render Sequence (`PlayScreen.java`)**:
+  - Added `hudStage = new Stage(hudViewport)` for screen-space UI elements with zero per-frame heap allocations.
+  - Established rendering order: Clear -> Apply world viewport -> Render world & entities with interpolation -> Render Box2D debug lines -> Apply HUD viewport -> Render HUD stage.
+  - Added lifecycle disposal for `hudStage`.
+- **Automated Verification Suite (`Phase3F2Test.java`)**:
+  - Added 9 comprehensive automated tests verifying minimum 20x12 dimensions, wide/tall aspect ratios, ultrawide layouts (20:9, 21:9), resize behavior, camera centering, world coordinate consistency, and HUD coordinate independence.
+  - Verified that all 32 Phase 3F.1 regression tests remain 100% green (total 41 passing tests).
+
+---
+
 ## [0.3.6] - Phase 3F.1: Timestep Clamping & Render Interpolation - 2026-11-22
 
 ### Added

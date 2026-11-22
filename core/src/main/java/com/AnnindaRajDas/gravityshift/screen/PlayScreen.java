@@ -9,12 +9,14 @@ import com.AnnindaRajDas.gravityshift.physics.Direction;
 import com.AnnindaRajDas.gravityshift.physics.PhysicsController;
 import com.AnnindaRajDas.gravityshift.render.WorldRenderer;
 import com.badlogic.gdx.physics.box2d.Box2DDebugRenderer;
+import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.utils.ScreenUtils;
 
 /**
  * Main gameplay screen where the physics world, entities, and puzzle
  * interactions run.
  * Coordinates input polling, entity updates, fixed timestep physics, rendering,
+ * dual-viewport dispatch (ExtendViewport for world, ScreenViewport for HUD),
  * and global gravity-transition orchestration.
  */
 public class PlayScreen extends BaseScreen {
@@ -23,16 +25,24 @@ public class PlayScreen extends BaseScreen {
     private final EntityManager entityManager;
     private final WorldRenderer worldRenderer;
     private final Box2DDebugRenderer debugRenderer;
+    private final Stage hudStage;
     private final Player player;
     private final PlayerInputController playerInputController;
     private boolean disposed = false;
 
     public PlayScreen(GravityShiftGame game) {
+        this(game, null);
+    }
+
+    public PlayScreen(GravityShiftGame game, Stage hudStage) {
         super(game);
         this.physicsController = new PhysicsController();
         this.entityManager = new EntityManager();
         this.worldRenderer = new WorldRenderer();
         this.debugRenderer = new Box2DDebugRenderer();
+
+        // Initialize HUD stage for screen-space UI elements
+        this.hudStage = (hudStage != null) ? hudStage : new Stage(hudViewport);
 
         // Spawn player at (x=3.0m, y=5.0m) above the ground platform
         this.player = Player.create(physicsController.getBodyFactory(), 3.0f, 5.0f);
@@ -108,7 +118,7 @@ public class PlayScreen extends BaseScreen {
         // 4. Clear screen buffer with sleek background color
         ScreenUtils.clear(0.08f, 0.09f, 0.12f, 1.0f);
 
-        // 5. Apply camera and viewport projection
+        // 5. Apply world camera and viewport projection
         viewport.apply();
         camera.update();
 
@@ -119,6 +129,25 @@ public class PlayScreen extends BaseScreen {
         if (GameConfig.DEBUG_PHYSICS) {
             debugRenderer.render(physicsController.getWorld(), camera.combined);
         }
+
+        // 8. Apply HUD viewport and render UI/HUD stage in screen-pixel space
+        hudViewport.apply();
+        if (hudStage != null) {
+            hudStage.act(delta);
+            hudStage.draw();
+        }
+    }
+
+    @Override
+    public void resize(int width, int height) {
+        super.resize(width, height);
+        if (hudStage != null && hudStage.getViewport() != null) {
+            hudStage.getViewport().update(width, height, true);
+        }
+    }
+
+    public Stage getHudStage() {
+        return hudStage;
     }
 
     public Player getPlayer() {
@@ -145,10 +174,15 @@ public class PlayScreen extends BaseScreen {
         disposed = true;
         super.dispose();
 
-        // 1. Dispose entity bodies
+        // 1. Dispose HUD stage
+        if (hudStage != null) {
+            hudStage.dispose();
+        }
+
+        // 2. Dispose entity bodies
         entityManager.dispose();
 
-        // 2. Release rendering resources
+        // 3. Release rendering resources
         worldRenderer.dispose();
         debugRenderer.dispose();
 

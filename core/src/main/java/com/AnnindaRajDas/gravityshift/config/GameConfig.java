@@ -17,9 +17,11 @@ public final class GameConfig {
     public static final int DESKTOP_HEIGHT = 576;
 
     // Virtual World Dimensions (in Meters for Box2D compatibility)
-    // A 16:9 or 5:3 ratio viewport in meters. Box2D operates best between 0.1m - 10m.
-    public static final float WORLD_WIDTH = 20.0f;   // 20 meters wide
-    public static final float WORLD_HEIGHT = 12.0f;  // 12 meters high
+    // Minimum 20x12 meter chamber area. ExtendViewport expands beyond this on wider/taller screens.
+    public static final float WORLD_WIDTH = 20.0f;       // 20 meters wide
+    public static final float WORLD_HEIGHT = 12.0f;      // 12 meters high
+    public static final float MIN_WORLD_WIDTH = 20.0f;   // Minimum world width in meters
+    public static final float MIN_WORLD_HEIGHT = 12.0f;  // Minimum world height in meters
 
     // Physics Simulation Constants
     public static final float TIME_STEP = 1.0f / 60.0f; // Fixed 60Hz physics step
