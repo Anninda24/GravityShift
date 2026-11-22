@@ -301,7 +301,7 @@ public class Player extends Entity {
     }
 
     private void logUnderflow(Direction dir) {
-        if (GameConfig.DEBUG_PHYSICS) {
+        if (GameConfig.DEBUG_PHYSICS && Gdx.app != null) {
             Gdx.app.error("Player", "Unexpected contact counter underflow for sensor: " + dir);
         }
     }

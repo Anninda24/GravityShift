@@ -17,6 +17,7 @@ public class PhysicsController implements Disposable {
     private final BodyFactory bodyFactory;
     private float accumulator;
     private PhysicsStepListener stepListener;
+    private boolean disposed = false;
 
     public PhysicsController() {
         // Initialize native Box2D binaries once
@@ -42,6 +43,9 @@ public class PhysicsController implements Disposable {
      * @param delta rendering delta time in seconds
      */
     public void update(float delta) {
+        if (disposed) {
+            throw new IllegalStateException("Cannot update a disposed PhysicsController.");
+        }
         if (!Float.isFinite(delta) || delta <= 0.0f) {
             return;
         }
@@ -148,10 +152,17 @@ public class PhysicsController implements Disposable {
         return gravityController;
     }
 
+    public boolean isDisposed() {
+        return disposed;
+    }
+
     @Override
     public void dispose() {
-        // Release native C++ Box2D world memory
-        world.dispose();
+        if (!disposed) {
+            disposed = true;
+            // Release native C++ Box2D world memory
+            world.dispose();
+        }
     }
 }
 
