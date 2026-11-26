@@ -1,6 +1,7 @@
 package com.AnnindaRajDas.gravityshift;
 
 import com.AnnindaRajDas.gravityshift.config.GameConfig;
+import com.AnnindaRajDas.gravityshift.debug.BackgroundMetricsSampler;
 import com.AnnindaRajDas.gravityshift.debug.DebugOverlay;
 import com.AnnindaRajDas.gravityshift.debug.FallbackRuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.debug.RuntimeMetricsProvider;
@@ -145,12 +146,15 @@ public class Phase3F7Test {
         world.dispose();
     }
 
-    // 5. Hot-path vector reuse & cached Direction array & JVM thread allocation check
+    // 5. Hot-path vector reuse & safe Direction indexed access & JVM thread allocation check
     @Test
     public void test05_HotPathReuseAndThreadAllocationCheck() {
-        // Direction.VALUES avoids repeated array allocation from Enum.values()
-        assertSame(Direction.VALUES, Direction.VALUES);
-        assertEquals(4, Direction.VALUES.length);
+        // Direction.count() / fromIndex() avoids exposing a public mutable array or calling Enum.values()
+        assertEquals(4, Direction.count());
+        assertSame(Direction.DOWN, Direction.fromIndex(0));
+        assertSame(Direction.UP, Direction.fromIndex(1));
+        assertSame(Direction.LEFT, Direction.fromIndex(2));
+        assertSame(Direction.RIGHT, Direction.fromIndex(3));
 
         PhysicsController pc = new PhysicsController();
         EntityManager em = new EntityManager();
@@ -389,5 +393,100 @@ public class Phase3F7Test {
         assertThrows(IllegalArgumentException.class, () -> new DebugOverlay(null, true));
         assertThrows(IllegalArgumentException.class, () -> new DebugOverlay(custom, true, 0.0f));
         assertThrows(IllegalArgumentException.class, () -> new DebugOverlay(custom, true, -1.0f));
+    }
+
+    // 13. BackgroundMetricsSampler executes off game thread and game-thread reads never block
+    @Test
+    public void test13_BackgroundSampler_ExecutesOffGameThreadAndNonBlockingReads() throws InterruptedException {
+        final Thread[] samplingThread = { null };
+        final int[] sampleCalls = { 0 };
+        Thread testThread = Thread.currentThread();
+
+        RuntimeMetricsProvider slowDelegate = out -> {
+            samplingThread[0] = Thread.currentThread();
+            sampleCalls[0]++;
+            out.gcInvocationCount = 42L;
+            out.javaHeapUsedBytes = 16L * 1024L * 1024L;
+            out.javaHeapMaxBytes = 256L * 1024L * 1024L;
+            out.nativeHeapBytes = 8L * 1024L * 1024L;
+        };
+
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(slowDelegate, 40L);
+        DebugOverlay overlay = new DebugOverlay(sampler, true, 0.05f);
+
+        // Wait briefly for background thread to publish at least one sample
+        long deadline = System.currentTimeMillis() + 1000L;
+        while (sampleCalls[0] == 0 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+        }
+
+        assertTrue(sampleCalls[0] >= 1, "Background sampler must execute");
+        assertNotNull(samplingThread[0]);
+        assertNotSame(testThread, samplingThread[0],
+            "Platform metric sampling must NOT execute on the game/test thread");
+
+        // Game-thread read must be immediate, non-blocking, and reflect published values
+        RuntimeMetricsSnapshot out = new RuntimeMetricsSnapshot();
+        long t0 = System.nanoTime();
+        sampler.sample(out);
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
+        assertTrue(elapsedMs < 10L, "Game-thread sample() must never block");
+        assertEquals(42L, out.gcInvocationCount);
+        assertEquals(16L * 1024L * 1024L, out.javaHeapUsedBytes);
+
+        overlay.dispose();
+        assertTrue(sampler.isDisposed());
+    }
+
+    // 14. Disabling overlay stops background sampling and disposal releases sampler cleanly
+    @Test
+    public void test14_BackgroundSampler_DisableStopsSamplingAndDisposalReleases() throws InterruptedException {
+        final int[] calls = { 0 };
+        RuntimeMetricsProvider counting = out -> {
+            calls[0]++;
+            out.gcInvocationCount = calls[0];
+        };
+
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(counting, 25L);
+        DebugOverlay overlay = new DebugOverlay(sampler, true, 0.05f);
+
+        long deadline = System.currentTimeMillis() + 1000L;
+        while (calls[0] < 2 && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10L);
+        }
+        assertTrue(calls[0] >= 2);
+
+        // Disable overlay -> stops background sampling
+        overlay.setEnabled(false);
+        assertFalse(sampler.isSamplingActive());
+        Thread.sleep(60L);
+        int countAfterDisable = calls[0];
+        Thread.sleep(100L);
+        assertEquals(countAfterDisable, calls[0], "Disabled overlay must stop background sampling");
+
+        overlay.dispose();
+        assertTrue(sampler.isDisposed());
+        assertFalse(sampler.isSamplingActive());
+    }
+
+    // 15. Background provider exceptions never crash gameplay and safely report N/A
+    @Test
+    public void test15_BackgroundSampler_ProviderExceptionNeverCrashesGameplay() throws InterruptedException {
+        RuntimeMetricsProvider failing = out -> {
+            throw new RuntimeException("Simulated platform metric failure");
+        };
+
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(failing, 25L);
+        DebugOverlay overlay = new DebugOverlay(sampler, true, 0.05f);
+
+        Thread.sleep(80L);
+        overlay.update(DT, 60);
+
+        String text = overlay.getDisplayText().toString();
+        assertTrue(text.contains("GC: N/A"));
+        assertTrue(text.contains("Heap: N/A"));
+        assertTrue(text.contains("Native: N/A"));
+
+        overlay.dispose();
     }
 }

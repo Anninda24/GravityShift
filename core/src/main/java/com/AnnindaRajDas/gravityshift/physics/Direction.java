@@ -10,7 +10,17 @@ public enum Direction {
     LEFT,
     RIGHT;
 
-    /** Cached array of all enum values to avoid per-call array allocations from values(). */
-    public static final Direction[] VALUES = values();
+    /** Private cached array of all enum values to avoid per-call array allocations from values(). */
+    private static final Direction[] VALUES = values();
+
+    /** Returns the number of cardinal directions without allocating an array. */
+    public static int count() {
+        return VALUES.length;
+    }
+
+    /** Returns the cardinal direction at the given ordinal index without allocating an array. */
+    public static Direction fromIndex(int index) {
+        return VALUES[index];
+    }
 }
 

@@ -7,6 +7,23 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.18] - Phase 3F.7.1: Off-Thread Android Metrics Sampling & Direction Encapsulation - 2026-11-26
+
+### Changed
+- **Off-Thread Android GC & Heap Sampling (`BackgroundMetricsSampler.java`, `AndroidRuntimeMetricsProvider.java`, `RuntimeMetricsProvider.java`, `DebugOverlay.java`)**:
+  - Moved `Debug.getRuntimeStat("art.gc.gc-count")`, `Debug.getNativeHeapAllocatedSize()`, and `Runtime` sampling off the game/render thread onto a single controlled daemon thread (`"RuntimeMetricsSampler"`) at `0.5s` intervals.
+  - Implemented lock-free double-buffered `RuntimeMetricsSnapshot` publication (`snapshotA` / `snapshotB` with `volatile latestSnapshot` reference swap), guaranteeing non-blocking, zero-allocation reads on the game thread.
+  - Added `setSamplingEnabled(boolean)` and `dispose()` lifecycle hooks on `RuntimeMetricsProvider`, wired from `DebugOverlay` so disabling or disposing immediately stops the background sampler without leaking threads.
+- **Direction Encapsulation (`Direction.java`, `Player.java`)**:
+  - Changed `Direction.VALUES` to `private static final` and exposed `Direction.count()` and `Direction.fromIndex(int)` so external callers cannot mutate the cached enum array while preserving allocation-free iteration in `Player.dispose()`.
+
+### Added
+- **Phase 3F.7.1 Tests (`Phase3F7Test.java`)**:
+  - Added `test13_BackgroundSampler_ExecutesOffGameThreadAndNonBlockingReads`, `test14_BackgroundSampler_DisableStopsSamplingAndDisposalReleases`, and `test15_BackgroundSampler_ProviderExceptionNeverCrashesGameplay`.
+  - Full core regression suite expanded to **153/153 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 24 Phase 3F.5, 21 Phase 3F.6, 15 Phase 3F.7).
+
+---
+
 ## [0.3.17] - Phase 3F.7: Allocation Discipline & Runtime Debug Overlay - 2026-11-26
 
 ### Changed

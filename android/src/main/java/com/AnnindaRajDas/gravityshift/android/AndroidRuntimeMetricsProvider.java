@@ -2,24 +2,43 @@ package com.AnnindaRajDas.gravityshift.android;
 
 import android.os.Build;
 import android.os.Debug;
+import com.AnnindaRajDas.gravityshift.debug.BackgroundMetricsSampler;
 import com.AnnindaRajDas.gravityshift.debug.RuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.debug.RuntimeMetricsSnapshot;
 
 /**
  * Android implementation of {@link RuntimeMetricsProvider}.
- * Queries ART GC invocation count via {@link Debug#getRuntimeStat(String)} (API 23+),
- * native heap via {@link Debug#getNativeHeapAllocatedSize()}, and Java heap via {@link Runtime}.
+ * Uses {@link BackgroundMetricsSampler} to execute ART GC metric queries
+ * ({@link Debug#getRuntimeStat(String)}) on a single controlled background daemon thread
+ * at 0.5s intervals so the game/render thread performs zero allocations and never blocks.
  */
 public class AndroidRuntimeMetricsProvider implements RuntimeMetricsProvider {
 
     private static final String ART_GC_COUNT_STAT = "art.gc.gc-count";
+    private static final long SAMPLE_INTERVAL_MS = 500L;
+
+    private final BackgroundMetricsSampler backgroundSampler;
+
+    public AndroidRuntimeMetricsProvider() {
+        this.backgroundSampler = new BackgroundMetricsSampler(this::sampleOnBackgroundThread, SAMPLE_INTERVAL_MS);
+    }
 
     @Override
     public void sample(RuntimeMetricsSnapshot out) {
-        if (out == null) {
-            return;
-        }
+        backgroundSampler.sample(out);
+    }
 
+    @Override
+    public void setSamplingEnabled(boolean enabled) {
+        backgroundSampler.setSamplingEnabled(enabled);
+    }
+
+    @Override
+    public void dispose() {
+        backgroundSampler.dispose();
+    }
+
+    private void sampleOnBackgroundThread(RuntimeMetricsSnapshot out) {
         // 1. Java heap used & max
         Runtime runtime = Runtime.getRuntime();
         out.javaHeapUsedBytes = Math.max(0L, runtime.totalMemory() - runtime.freeMemory());

@@ -64,6 +64,7 @@ public class DebugOverlay implements Disposable {
         this.metricsProvider = metricsProvider;
         this.enabled = initiallyEnabled;
         this.sampleInterval = sampleInterval;
+        this.metricsProvider.setSamplingEnabled(initiallyEnabled);
         formatTextBuffer(0);
     }
 
@@ -147,6 +148,7 @@ public class DebugOverlay implements Disposable {
             return;
         }
         this.enabled = enabled;
+        metricsProvider.setSamplingEnabled(enabled);
         if (enabled) {
             // Trigger fresh sample on next update without waiting for full interval
             this.hasSampledOnce = false;
@@ -263,6 +265,8 @@ public class DebugOverlay implements Disposable {
         }
         disposed = true;
         enabled = false;
+        metricsProvider.setSamplingEnabled(false);
+        metricsProvider.dispose();
         if (font != null) {
             font.dispose();
             font = null;
