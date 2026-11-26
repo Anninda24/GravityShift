@@ -7,6 +7,41 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.20] - Phase 3F.7.3: Safe Snapshot Publication & Sampler Lifecycle - 2026-11-26
+
+### Changed
+- **Immutable `AtomicReference` Snapshot Publication (`BackgroundMetricsSampler.java`)**:
+  - Replaced the seqlock mutable-snapshot publication with `ImmutableMetricsSnapshot` (four `final long` primitive fields) published via `AtomicReference<ImmutableMetricsSnapshot>`.
+  - Background sampler constructs a new `ImmutableMetricsSnapshot` once per `500ms` sample and atomically sets `latestSnapshot`.
+  - Game thread performs a single non-blocking `latestSnapshot.get()` and copies the four `final long` values into its reusable `out` snapshot with zero allocations.
+- **Explicit Worker Lifecycle State Machine (`BackgroundMetricsSampler.java`)**:
+  - Added `WorkerState` (`DISABLED_STOPPED`, `ENABLED_RUNNING`, `DISABLED_TERMINATING`, `DISPOSED`) and `samplingDesired` flag.
+  - `samplerThread` is never cleared while the worker is alive; re-enabling while `DISABLED_TERMINATING` sets `samplingDesired = true` without spawning a second thread, and the exiting worker's `finally` block starts the replacement cleanly once terminated.
+
+### Added
+- **Deterministic Latch-Based Lifecycle & Snapshot Tests (`Phase3F7Test.java`)**:
+  - Updated `test16`–`test18` for immutable `AtomicReference` publication and zero-allocation game-thread reads.
+  - Added `test19_WorkerLifecycle_DisableAndReenableDuringBlockedCall_NeverOverlaps` and `test20_WorkerLifecycle_DisposalDuringBlockedCall_NeverSpawnsReplacement`.
+  - Full core regression suite expanded to **158/158 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 24 Phase 3F.5, 21 Phase 3F.6, 20 Phase 3F.7).
+
+---
+
+## [0.3.19] - Phase 3F.7.2: Metrics Snapshot Concurrency Correction - 2026-11-26
+
+### Fixed
+- **Snapshot Data Race (`BackgroundMetricsSampler.java`)**:
+  - Replaced the double-buffer reference swap with a single-writer, lock-free sequence lock (`volatile long sequence`, even = consistent, odd = write in progress).
+  - Background writer delegates into `scratchSnapshot` outside the seqlock window, increments `sequence` to odd, copies all four primitive `long` fields into `publishedSnapshot`, and increments `sequence` to even.
+  - Game thread performs bounded retries (`MAX_READ_RETRIES = 4`) reading `seqBefore` (even), copying all four fields to locals, and validating `seqBefore == seqAfter`; retains previous valid values on retry exhaustion without blocking or allocating.
+  - Hardened error handling to catch `Exception` rather than `Throwable` (allowing fatal `OutOfMemoryError`/`ThreadDeath` to propagate), restored `Thread.currentThread().interrupt()` on `InterruptedException`, and added thread-identity guarding (`samplerThread == self`) to prevent duplicate workers on rapid toggle.
+
+### Added
+- **Concurrency Stress Tests (`Phase3F7Test.java`)**:
+  - Added `test16_Seqlock_SustainedConcurrentWriterReader_NoMixedGenerations`, `test17_Seqlock_BoundedRetriesAndRetainsPreviousValidSnapshot`, and `test18_BackgroundSampler_RapidToggleNeverCreatesDuplicateWorkers`.
+  - Full core regression suite expanded to **156/156 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 24 Phase 3F.5, 21 Phase 3F.6, 18 Phase 3F.7).
+
+---
+
 ## [0.3.18] - Phase 3F.7.1: Off-Thread Android Metrics Sampling & Direction Encapsulation - 2026-11-26
 
 ### Changed

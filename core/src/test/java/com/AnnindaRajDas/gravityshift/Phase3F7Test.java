@@ -25,6 +25,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.lang.management.ManagementFactory;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -488,5 +491,194 @@ public class Phase3F7Test {
         assertTrue(text.contains("Native: N/A"));
 
         overlay.dispose();
+    }
+
+    // 16. Sustained concurrent writer/reader stress test: immutable generations never mix
+    @Test
+    public void test16_ImmutableSnapshot_SustainedConcurrentWriterReader_NoMixedGenerations() {
+        final long[] gen = { 0L };
+        RuntimeMetricsProvider correlatedWriter = out -> {
+            long g = ++gen[0];
+            out.gcInvocationCount = g;
+            out.javaHeapUsedBytes = g * 1000L;
+            out.javaHeapMaxBytes = g * 2000L;
+            out.nativeHeapBytes = g * 3000L;
+        };
+
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(correlatedWriter, 1L);
+        sampler.setSamplingEnabled(true);
+
+        RuntimeMetricsSnapshot out = new RuntimeMetricsSnapshot();
+        long lastGc = -1L;
+        int observedGenerations = 0;
+
+        for (int i = 0; i < 50_000; i++) {
+            sampler.sample(out);
+            if (out.gcInvocationCount > 0L) {
+                long g = out.gcInvocationCount;
+                assertEquals(g * 1000L, out.javaHeapUsedBytes, "Torn javaHeapUsedBytes for gen " + g);
+                assertEquals(g * 2000L, out.javaHeapMaxBytes, "Torn javaHeapMaxBytes for gen " + g);
+                assertEquals(g * 3000L, out.nativeHeapBytes, "Torn nativeHeapBytes for gen " + g);
+                assertTrue(g >= lastGc, "Generation must never regress");
+                if (g > lastGc) {
+                    observedGenerations++;
+                    lastGc = g;
+                }
+            }
+            if (i % 1000 == 0) {
+                Thread.yield();
+            }
+        }
+
+        assertTrue(observedGenerations >= 2, "Reader must observe multiple immutable generations");
+        sampler.dispose();
+    }
+
+    // 17. Game-thread sample() is non-blocking and zero-allocation
+    @Test
+    public void test17_ImmutableSnapshot_GameThreadReadZeroAllocationsAndNonBlocking() throws InterruptedException {
+        RuntimeMetricsProvider fastWriter = out -> {
+            out.gcInvocationCount = 100L;
+            out.javaHeapUsedBytes = 200L;
+            out.javaHeapMaxBytes = 300L;
+            out.nativeHeapBytes = 400L;
+        };
+
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(fastWriter, 2L);
+        sampler.setSamplingEnabled(true);
+        Thread.sleep(20L);
+
+        RuntimeMetricsSnapshot out = new RuntimeMetricsSnapshot();
+        for (int i = 0; i < 100; i++) sampler.sample(out); // warmup
+
+        var bean = ManagementFactory.getThreadMXBean();
+        if (bean instanceof com.sun.management.ThreadMXBean threadBean && threadBean.isThreadAllocatedMemorySupported()) {
+            long tid = Thread.currentThread().threadId();
+            long before = threadBean.getThreadAllocatedBytes(tid);
+            for (int i = 0; i < 10_000; i++) {
+                sampler.sample(out);
+            }
+            long after = threadBean.getThreadAllocatedBytes(tid);
+            assertEquals(0L, after - before, "Game-thread sample() must allocate 0 bytes");
+        }
+
+        assertEquals(100L, out.gcInvocationCount);
+        assertEquals(200L, out.javaHeapUsedBytes);
+        sampler.dispose();
+    }
+
+    // 18. Rapid enable/disable never creates duplicate sampler threads
+    @Test
+    public void test18_BackgroundSampler_RapidToggleNeverCreatesDuplicateWorkers() throws InterruptedException {
+        RuntimeMetricsProvider noop = out -> out.gcInvocationCount = 1L;
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(noop, 20L);
+
+        for (int i = 0; i < 20; i++) {
+            sampler.setSamplingEnabled(true);
+            sampler.setSamplingEnabled(false);
+        }
+        sampler.setSamplingEnabled(true);
+        Thread.sleep(50L);
+
+        int aliveSamplers = 0;
+        for (Thread t : Thread.getAllStackTraces().keySet()) {
+            if ("RuntimeMetricsSampler".equals(t.getName()) && t.isAlive()) {
+                aliveSamplers++;
+            }
+        }
+        assertTrue(aliveSamplers <= 1, "Must never spawn duplicate RuntimeMetricsSampler threads, found " + aliveSamplers);
+
+        sampler.dispose();
+        Thread.sleep(60L);
+        assertTrue(sampler.isDisposed());
+        assertFalse(sampler.isSamplingActive());
+    }
+
+    // 19. Deterministic latch test: disable + re-enable during blocked provider call never overlaps workers
+    @Test
+    public void test19_WorkerLifecycle_DisableAndReenableDuringBlockedCall_NeverOverlaps() throws InterruptedException {
+        CountDownLatch firstWorkerEntered = new CountDownLatch(1);
+        CountDownLatch releaseFirstWorker = new CountDownLatch(1);
+        CountDownLatch secondWorkerEntered = new CountDownLatch(1);
+        AtomicInteger activeWorkers = new AtomicInteger(0);
+        AtomicInteger maxConcurrentWorkers = new AtomicInteger(0);
+        AtomicInteger totalCalls = new AtomicInteger(0);
+
+        RuntimeMetricsProvider blockingDelegate = out -> {
+            int concurrent = activeWorkers.incrementAndGet();
+            maxConcurrentWorkers.accumulateAndGet(concurrent, Math::max);
+            int callNum = totalCalls.incrementAndGet();
+            try {
+                if (callNum == 1) {
+                    firstWorkerEntered.countDown();
+                    try {
+                        releaseFirstWorker.await(2, TimeUnit.SECONDS);
+                    } catch (InterruptedException ignored) {
+                        // Simulate non-interruptible provider call finishing naturally
+                    }
+                } else {
+                    secondWorkerEntered.countDown();
+                }
+                out.gcInvocationCount = callNum;
+            } finally {
+                activeWorkers.decrementAndGet();
+            }
+        };
+
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(blockingDelegate, 10L);
+        sampler.setSamplingEnabled(true);
+        assertTrue(firstWorkerEntered.await(1, TimeUnit.SECONDS), "First worker must enter provider call");
+
+        // Disable while first worker is blocked -> must enter DISABLED_TERMINATING
+        sampler.setSamplingEnabled(false);
+        assertEquals(BackgroundMetricsSampler.WorkerState.DISABLED_TERMINATING, sampler.getWorkerState());
+
+        // Re-enable BEFORE first worker finishes -> must NOT start a second worker!
+        sampler.setSamplingEnabled(true);
+        assertEquals(BackgroundMetricsSampler.WorkerState.DISABLED_TERMINATING, sampler.getWorkerState());
+        assertEquals(1, activeWorkers.get(), "No second worker may start while first worker is still alive");
+
+        // Release first worker -> exits, then replacement worker starts cleanly
+        releaseFirstWorker.countDown();
+        assertTrue(secondWorkerEntered.await(1, TimeUnit.SECONDS),
+            "Replacement worker must start after first worker finishes when samplingDesired=true");
+        assertEquals(1, maxConcurrentWorkers.get(), "Max concurrent workers must strictly remain 1");
+
+        sampler.dispose();
+    }
+
+    // 20. Deterministic latch test: disposal during blocked provider call prevents future worker creation
+    @Test
+    public void test20_WorkerLifecycle_DisposalDuringBlockedCall_NeverSpawnsReplacement() throws InterruptedException {
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        AtomicInteger callCount = new AtomicInteger(0);
+
+        RuntimeMetricsProvider blockingDelegate = out -> {
+            callCount.incrementAndGet();
+            entered.countDown();
+            try {
+                release.await(2, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+            }
+        };
+
+        BackgroundMetricsSampler sampler = new BackgroundMetricsSampler(blockingDelegate, 10L);
+        sampler.setSamplingEnabled(true);
+        assertTrue(entered.await(1, TimeUnit.SECONDS));
+
+        // Dispose while blocked -> game thread returns immediately, state is DISPOSED
+        sampler.dispose();
+        assertTrue(sampler.isDisposed());
+        assertEquals(BackgroundMetricsSampler.WorkerState.DISPOSED, sampler.getWorkerState());
+
+        // Re-enable after dispose -> must be ignored
+        sampler.setSamplingEnabled(true);
+        assertEquals(BackgroundMetricsSampler.WorkerState.DISPOSED, sampler.getWorkerState());
+
+        // Release blocked call -> worker exits, no second call occurs
+        release.countDown();
+        Thread.sleep(60L);
+        assertEquals(1, callCount.get(), "No new worker or sample may run after disposal");
     }
 }

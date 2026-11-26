@@ -1,39 +1,68 @@
 package com.AnnindaRajDas.gravityshift.debug;
 
+import java.util.concurrent.atomic.AtomicReference;
+
 /**
- * Single-writer, lock-free sequence-locked background sampler wrapping a {@link RuntimeMetricsProvider}.
+ * Single-worker background metrics sampler wrapping a {@link RuntimeMetricsProvider}.
  * Isolates platform metric queries (such as Android's {@code Debug.getRuntimeStat})
  * off the game/render thread onto a single controlled daemon thread.
  *
- * Memory visibility & consistency guarantees (Java Memory Model):
- * - A {@code volatile long sequence} counter coordinates a single background writer and game-thread reader.
- * - Odd {@code sequence} values indicate a write in progress; even values indicate a completed generation.
- * - The writer performs {@code delegate.sample(scratchSnapshot)} outside the seqlock window, then:
- *     1. Writes {@code sequence = seq + 1} (odd, volatile write barrier).
- *     2. Copies the four primitive {@code long} fields into {@code publishedSnapshot}.
- *     3. Writes {@code sequence = seq + 2} (even, volatile write flushes all 4 fields).
- * - The reader reads {@code seqBefore = sequence} (volatile read), copies the four fields into locals,
- *   then reads {@code seqAfter = sequence} (volatile read). If {@code seqBefore == seqAfter} and even,
- *   the volatile-read/volatile-write happens-before edge guarantees all four fields belong to the same
- *   generation with zero torn or mixed-generation reads.
- * - Retries are bounded by {@link #MAX_READ_RETRIES}; if contention persists, the previous valid
- *   values in {@code out} are retained and the game thread never blocks or allocates.
+ * Snapshot publication & JMM safety:
+ * - Sampled metrics are published as {@link ImmutableMetricsSnapshot} instances with {@code final}
+ *   primitive fields via {@link AtomicReference#set(Object)}.
+ * - The game thread's {@link #sample(RuntimeMetricsSnapshot)} performs a single non-blocking
+ *   {@link AtomicReference#get()} and copies the four {@code final long} fields into the caller's
+ *   reusable {@code out} snapshot, performing zero allocations and never blocking.
+ *
+ * Worker lifecycle guarantees:
+ * - Explicit {@link WorkerState} ({@code DISABLED_STOPPED}, {@code ENABLED_RUNNING},
+ *   {@code DISABLED_TERMINATING}, {@code DISPOSED}) prevents overlapping workers during rapid
+ *   disable/re-enable cycles even when a provider call is non-interruptible.
  */
 public class BackgroundMetricsSampler implements RuntimeMetricsProvider {
 
-    public static final int MAX_READ_RETRIES = 4;
+    public enum WorkerState {
+        DISABLED_STOPPED,
+        ENABLED_RUNNING,
+        DISABLED_TERMINATING,
+        DISPOSED
+    }
+
+    /**
+     * Immutable snapshot published atomically from the background sampler thread.
+     * All fields are {@code final} primitives, guaranteeing safe publication under the JMM.
+     */
+    public static final class ImmutableMetricsSnapshot {
+        public static final ImmutableMetricsSnapshot UNAVAILABLE =
+            new ImmutableMetricsSnapshot(-1L, -1L, -1L, -1L);
+
+        public final long gcInvocationCount;
+        public final long javaHeapUsedBytes;
+        public final long javaHeapMaxBytes;
+        public final long nativeHeapBytes;
+
+        public ImmutableMetricsSnapshot(long gcInvocationCount,
+                                        long javaHeapUsedBytes,
+                                        long javaHeapMaxBytes,
+                                        long nativeHeapBytes) {
+            this.gcInvocationCount = gcInvocationCount;
+            this.javaHeapUsedBytes = javaHeapUsedBytes;
+            this.javaHeapMaxBytes = javaHeapMaxBytes;
+            this.nativeHeapBytes = nativeHeapBytes;
+        }
+    }
 
     private final RuntimeMetricsProvider delegate;
     private final long sampleIntervalMs;
 
     private final RuntimeMetricsSnapshot scratchSnapshot = new RuntimeMetricsSnapshot();
-    private final RuntimeMetricsSnapshot publishedSnapshot = new RuntimeMetricsSnapshot();
-    private volatile long sequence = 0L;
+    private final AtomicReference<ImmutableMetricsSnapshot> latestSnapshot =
+        new AtomicReference<>(ImmutableMetricsSnapshot.UNAVAILABLE);
 
     private final Object lifecycleLock = new Object();
-    private volatile boolean samplingActive = false;
-    private volatile boolean disposed = false;
-    private volatile Thread samplerThread = null;
+    private WorkerState state = WorkerState.DISABLED_STOPPED;
+    private boolean samplingDesired = false;
+    private Thread samplerThread = null;
 
     public BackgroundMetricsSampler(RuntimeMetricsProvider delegate, long sampleIntervalMs) {
         if (delegate == null) {
@@ -51,57 +80,41 @@ public class BackgroundMetricsSampler implements RuntimeMetricsProvider {
         if (out == null) {
             return;
         }
-        trySampleConsistent(out);
+        ImmutableMetricsSnapshot snap = latestSnapshot.get();
+        out.gcInvocationCount = snap.gcInvocationCount;
+        out.javaHeapUsedBytes = snap.javaHeapUsedBytes;
+        out.javaHeapMaxBytes = snap.javaHeapMaxBytes;
+        out.nativeHeapBytes = snap.nativeHeapBytes;
     }
 
     /**
-     * Attempts a bounded lock-free seqlock read into {@code out}.
-     * If a consistent even-sequence snapshot is not observed within {@link #MAX_READ_RETRIES},
-     * {@code out} is left untouched (retaining its previous valid values) and {@code false} is returned.
-     *
-     * @param out target snapshot to populate
-     * @return true if a consistent snapshot was copied, false if bounded retries were exhausted
+     * Returns the current immutable snapshot reference (for inspection and testing).
      */
-    public boolean trySampleConsistent(RuntimeMetricsSnapshot out) {
-        if (out == null) {
-            return false;
-        }
-        for (int attempt = 0; attempt < MAX_READ_RETRIES; attempt++) {
-            long seqBefore = sequence;
-            if ((seqBefore & 1L) != 0L) {
-                continue;
-            }
-            long gc = publishedSnapshot.gcInvocationCount;
-            long used = publishedSnapshot.javaHeapUsedBytes;
-            long max = publishedSnapshot.javaHeapMaxBytes;
-            long nat = publishedSnapshot.nativeHeapBytes;
-            long seqAfter = sequence;
-
-            if (seqBefore == seqAfter) {
-                out.gcInvocationCount = gc;
-                out.javaHeapUsedBytes = used;
-                out.javaHeapMaxBytes = max;
-                out.nativeHeapBytes = nat;
-                return true;
-            }
-        }
-        return false;
+    public ImmutableMetricsSnapshot getLatestImmutableSnapshot() {
+        return latestSnapshot.get();
     }
 
     @Override
     public void setSamplingEnabled(boolean enabled) {
         synchronized (lifecycleLock) {
-            if (disposed) {
+            if (state == WorkerState.DISPOSED) {
                 return;
             }
-            if (enabled == samplingActive) {
-                return;
-            }
-            samplingActive = enabled;
+            samplingDesired = enabled;
             if (enabled) {
-                startThreadLocked();
+                if (state == WorkerState.DISABLED_STOPPED && samplerThread == null) {
+                    state = WorkerState.ENABLED_RUNNING;
+                    startThreadLocked();
+                }
+                // If DISABLED_TERMINATING, do NOT start a second worker; the exiting worker's
+                // finally block will observe samplingDesired == true and start the replacement.
             } else {
-                stopThreadLocked();
+                if (state == WorkerState.ENABLED_RUNNING) {
+                    state = WorkerState.DISABLED_TERMINATING;
+                    if (samplerThread != null) {
+                        samplerThread.interrupt();
+                    }
+                }
             }
         }
     }
@@ -109,75 +122,90 @@ public class BackgroundMetricsSampler implements RuntimeMetricsProvider {
     @Override
     public void dispose() {
         synchronized (lifecycleLock) {
-            if (disposed) {
+            if (state == WorkerState.DISPOSED) {
                 return;
             }
-            disposed = true;
-            samplingActive = false;
-            stopThreadLocked();
+            samplingDesired = false;
+            state = WorkerState.DISPOSED;
+            if (samplerThread != null) {
+                samplerThread.interrupt();
+            }
+        }
+    }
+
+    public WorkerState getWorkerState() {
+        synchronized (lifecycleLock) {
+            return state;
         }
     }
 
     public boolean isSamplingActive() {
-        return samplingActive && !disposed;
+        synchronized (lifecycleLock) {
+            return state == WorkerState.ENABLED_RUNNING && samplingDesired;
+        }
     }
 
     public boolean isDisposed() {
-        return disposed;
-    }
-
-    public long getSequence() {
-        return sequence;
+        synchronized (lifecycleLock) {
+            return state == WorkerState.DISPOSED;
+        }
     }
 
     private void startThreadLocked() {
-        if (samplerThread != null && samplerThread.isAlive()) {
-            return;
-        }
         Thread t = new Thread(this::runSamplingLoop, "RuntimeMetricsSampler");
         t.setDaemon(true);
         samplerThread = t;
         t.start();
     }
 
-    private void stopThreadLocked() {
-        Thread t = samplerThread;
-        if (t != null) {
-            samplerThread = null;
-            t.interrupt();
-        }
-    }
-
     private void runSamplingLoop() {
-        Thread self = Thread.currentThread();
-        while (samplingActive && !disposed && samplerThread == self) {
-            try {
-                scratchSnapshot.reset();
-                delegate.sample(scratchSnapshot);
-            } catch (Exception ignored) {
-                // Non-fatal provider exceptions must never crash gameplay; publish N/A (-1L).
-                // Fatal Errors (OutOfMemoryError, ThreadDeath) are intentionally not caught.
-                scratchSnapshot.reset();
+        try {
+            while (true) {
+                synchronized (lifecycleLock) {
+                    if (!samplingDesired || state != WorkerState.ENABLED_RUNNING) {
+                        break;
+                    }
+                }
+
+                try {
+                    scratchSnapshot.reset();
+                    delegate.sample(scratchSnapshot);
+                    latestSnapshot.set(new ImmutableMetricsSnapshot(
+                        scratchSnapshot.gcInvocationCount,
+                        scratchSnapshot.javaHeapUsedBytes,
+                        scratchSnapshot.javaHeapMaxBytes,
+                        scratchSnapshot.nativeHeapBytes
+                    ));
+                } catch (Exception ignored) {
+                    // Non-fatal provider exceptions must never crash gameplay; publish UNAVAILABLE.
+                    // Fatal Errors (OutOfMemoryError, ThreadDeath) are intentionally not caught.
+                    latestSnapshot.set(ImmutableMetricsSnapshot.UNAVAILABLE);
+                }
+
+                synchronized (lifecycleLock) {
+                    if (!samplingDesired || state != WorkerState.ENABLED_RUNNING) {
+                        break;
+                    }
+                }
+
+                try {
+                    Thread.sleep(sampleIntervalMs);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
-
-            if (!samplingActive || disposed || samplerThread != self) {
-                break;
-            }
-
-            // Single-writer seqlock publication
-            long currentSeq = sequence;
-            sequence = currentSeq + 1L; // odd: write in progress
-            publishedSnapshot.gcInvocationCount = scratchSnapshot.gcInvocationCount;
-            publishedSnapshot.javaHeapUsedBytes = scratchSnapshot.javaHeapUsedBytes;
-            publishedSnapshot.javaHeapMaxBytes = scratchSnapshot.javaHeapMaxBytes;
-            publishedSnapshot.nativeHeapBytes = scratchSnapshot.nativeHeapBytes;
-            sequence = currentSeq + 2L; // even: generation complete
-
-            try {
-                Thread.sleep(sampleIntervalMs);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
+        } finally {
+            synchronized (lifecycleLock) {
+                samplerThread = null;
+                if (state == WorkerState.DISPOSED) {
+                    // Stay DISPOSED; never spawn another worker
+                } else if (samplingDesired) {
+                    state = WorkerState.ENABLED_RUNNING;
+                    startThreadLocked();
+                } else {
+                    state = WorkerState.DISABLED_STOPPED;
+                }
             }
         }
     }
