@@ -656,8 +656,8 @@ public class Player extends Entity {
             topContacts = 0;
             leftContacts = 0;
             rightContacts = 0;
-            for (Direction dir : Direction.values()) {
-                clearSupportBodies(dir);
+            for (int i = 0; i < Direction.VALUES.length; i++) {
+                clearSupportBodies(Direction.VALUES[i]);
             }
             jumpConsumed = false;
             leftSupportSinceLaunch = true;

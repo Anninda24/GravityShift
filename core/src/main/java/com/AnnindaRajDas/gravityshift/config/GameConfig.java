@@ -50,4 +50,5 @@ public final class GameConfig {
 
     // Debugging Flags
     public static final boolean DEBUG_PHYSICS = true;
+    public static final boolean DEBUG_OVERLAY = DEBUG_PHYSICS;
 }

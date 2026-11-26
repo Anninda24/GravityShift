@@ -8,6 +8,9 @@ public enum Direction {
     DOWN,
     UP,
     LEFT,
-    RIGHT
+    RIGHT;
+
+    /** Cached array of all enum values to avoid per-call array allocations from values(). */
+    public static final Direction[] VALUES = values();
 }
 

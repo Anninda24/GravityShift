@@ -2,12 +2,17 @@ package com.AnnindaRajDas.gravityshift.screen;
 
 import com.AnnindaRajDas.gravityshift.GravityShiftGame;
 import com.AnnindaRajDas.gravityshift.config.GameConfig;
+import com.AnnindaRajDas.gravityshift.debug.DebugOverlay;
+import com.AnnindaRajDas.gravityshift.debug.FallbackRuntimeMetricsProvider;
+import com.AnnindaRajDas.gravityshift.debug.RuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.entity.EntityManager;
 import com.AnnindaRajDas.gravityshift.entity.Player;
 import com.AnnindaRajDas.gravityshift.input.PlayerInputController;
 import com.AnnindaRajDas.gravityshift.physics.Direction;
 import com.AnnindaRajDas.gravityshift.physics.PhysicsController;
 import com.AnnindaRajDas.gravityshift.render.WorldRenderer;
+import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
 import com.badlogic.gdx.physics.box2d.Box2DDebugRenderer;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.utils.ScreenUtils;
@@ -28,6 +33,7 @@ public class PlayScreen extends BaseScreen {
     private final Stage hudStage;
     private final Player player;
     private final PlayerInputController playerInputController;
+    private final DebugOverlay debugOverlay;
     private boolean disposed = false;
 
     public PlayScreen(GravityShiftGame game) {
@@ -51,6 +57,12 @@ public class PlayScreen extends BaseScreen {
 
         // Bind EntityManager as step listener to capture pre/post physics snapshots for render interpolation
         this.physicsController.setStepListener(this.entityManager);
+
+        // Initialize lightweight debug overlay with platform metrics provider
+        RuntimeMetricsProvider provider = (game != null && game.getMetricsProvider() != null)
+            ? game.getMetricsProvider()
+            : new FallbackRuntimeMetricsProvider();
+        this.debugOverlay = new DebugOverlay(provider, GameConfig.DEBUG_OVERLAY);
     }
 
     /**
@@ -136,6 +148,16 @@ public class PlayScreen extends BaseScreen {
             hudStage.act(delta);
             hudStage.draw();
         }
+
+        // 9. Optional F3 toggle & lightweight zero-per-frame-allocation debug overlay
+        if (Gdx.input != null && Gdx.input.isKeyJustPressed(Input.Keys.F3)) {
+            debugOverlay.setEnabled(!debugOverlay.isEnabled());
+        }
+        if (debugOverlay.isEnabled()) {
+            int fps = (Gdx.graphics != null) ? Gdx.graphics.getFramesPerSecond() : 0;
+            debugOverlay.update(delta, fps);
+            debugOverlay.render(hudCamera);
+        }
     }
 
     @Override
@@ -144,6 +166,23 @@ public class PlayScreen extends BaseScreen {
         if (hudStage != null && hudStage.getViewport() != null) {
             hudStage.getViewport().update(width, height, true);
         }
+        if (debugOverlay != null) {
+            debugOverlay.resize(width, height);
+        }
+    }
+
+    public DebugOverlay getDebugOverlay() {
+        return debugOverlay;
+    }
+
+    public void setDebugOverlayEnabled(boolean enabled) {
+        if (debugOverlay != null) {
+            debugOverlay.setEnabled(enabled);
+        }
+    }
+
+    public boolean isDebugOverlayEnabled() {
+        return debugOverlay != null && debugOverlay.isEnabled();
     }
 
     public Stage getHudStage() {
@@ -182,7 +221,10 @@ public class PlayScreen extends BaseScreen {
         // 2. Dispose entity bodies
         entityManager.dispose();
 
-        // 3. Release rendering resources
+        // 3. Release rendering and debug overlay resources
+        if (debugOverlay != null) {
+            debugOverlay.dispose();
+        }
         worldRenderer.dispose();
         debugRenderer.dispose();
 

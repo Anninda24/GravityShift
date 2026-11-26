@@ -56,8 +56,9 @@ public class GravityController {
         this.magnitude = magnitude;
         this.currentDirection = Direction.DOWN;
 
-        // Synchronize initial Box2D world gravity to DOWN
-        this.world.setGravity(calculateGravityVector(Direction.DOWN));
+        // Synchronize initial Box2D world gravity to DOWN using reusable buffer
+        setGravityVectorBuffer(Direction.DOWN);
+        this.world.setGravity(gravityVectorBuffer);
     }
 
     /**

@@ -7,6 +7,26 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.17] - Phase 3F.7: Allocation Discipline & Runtime Debug Overlay - 2026-11-26
+
+### Changed
+- **Hot-Path Allocation Audit & Cleanup (`Direction.java`, `Player.java`, `GravityController.java`)**:
+  - Audited `render()`, `update()`, `PhysicsController.update()`, `onPrePhysicsStep()`, `onPostPhysicsStep()`, `Player` movement/impulses, `GravityController`, `EntityManager`, `GameContactListener`, and `WorldRenderer`.
+  - Added cached `Direction.VALUES` to replace `Direction.values()` array copies in `Player.dispose()`.
+  - Updated `GravityController` constructor to initialize gravity using preallocated `gravityVectorBuffer` rather than `calculateGravityVector(Direction.DOWN)`.
+
+### Added
+- **Platform-Neutral Runtime Metrics & Debug Overlay (`core`, `android`, `lwjgl3`)**:
+  - Added `RuntimeMetricsProvider`, `RuntimeMetricsSnapshot`, `FallbackRuntimeMetricsProvider`, and `DebugOverlay` in `core/debug`.
+  - Implemented `AndroidRuntimeMetricsProvider` (`android`) querying ART GC count (`Debug.getRuntimeStat("art.gc.gc-count")`), native heap (`Debug.getNativeHeapAllocatedSize()`), and Java heap (`Runtime`), returning `-1L` (`N/A`) when unsupported.
+  - Implemented `DesktopRuntimeMetricsProvider` (`lwjgl3`) querying `GarbageCollectorMXBean` collection counts and Java heap (`Runtime`), reporting `N/A` for native heap where standard JVM does not expose Box2D C++ native heap.
+  - Wired `DebugOverlay` into `PlayScreen` HUD rendering (`F3` desktop toggle + `setDebugOverlayEnabled(boolean)`), sampling at `0.5s` intervals into a single preallocated `StringBuilder` via pure integer math and drawing from cached `GlyphLayout` / `BitmapFontCache` with zero per-frame allocations.
+- **Phase 3F.7 Verification Suite (`Phase3F7Test.java`)**:
+  - Added 12 tests covering movement/jump/cap/platform regressions, `Direction.VALUES` & `Entity` vector reuse, JVM `ThreadMXBean` zero-byte steady-state allocation verification across 300 frames, overlay enable/disable, `N/A` fallback handling, heap used vs max formatting, low-frequency sampling, `CharSequence` buffer identity, and disposal.
+  - Full core regression suite expanded to **150/150 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 24 Phase 3F.5, 21 Phase 3F.6, 12 Phase 3F.7).
+
+---
+
 ## [0.3.16] - Phase 3F.6: World-Space Momentum Cap - 2026-11-26
 
 ### Added
