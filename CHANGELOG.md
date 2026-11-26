@@ -7,6 +7,55 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.16] - Phase 3F.6: World-Space Momentum Cap - 2026-11-26
+
+### Added
+- **World-Space 15 m/s Momentum Cap (`GameConfig.java`, `GravityController.java`, `Player.java`)**:
+  - Defined `GameConfig.MAX_GRAVITY_SWITCH_SPEED = 15.0f` (`15.0 m/s`).
+  - Implemented allocation-free `GravityController.clampBodyVelocityToMaxSpeed(Body, float)` using double-precision Euclidean magnitude computation ($v = \sqrt{v_x^2 + v_y^2}$). When $v > 15\text{ m/s}$, scales the vector cleanly ($\vec{v}_{\text{new}} = \vec{v}_{\text{old}} \frac{15}{v}$) while preserving exact travel direction, guarding against zero velocity, non-finite inputs, and 1-ULP upward float32 rounding.
+  - Enforced strict box2d-safe transition ordering in `GravityController.setGravityDirection`: (1) validate unlocked world, (2–4) read dynamic body velocities, apply 15 m/s magnitude cap, preserve resulting velocities, (5) update world gravity via reusable `gravityVectorBuffer`, (6) wake affected dynamic bodies.
+  - Enforced transition cap and unlocked-world guard in `Player.onGravityDirectionChanged` as well so no code path can bypass the 15 m/s limit.
+- **Phase 3F.6 Regression & Cap Test Suite (`Phase3F6Test.java`)**:
+  - Added 21 tests covering below-cap preservation, exact $15.0\text{ m/s}$ axis and diagonal boundaries, over-cap magnitude clamping and angle preservation, 4-way transitions (`DOWN -> LEFT -> UP -> RIGHT -> DOWN`), repeated transitions, natural post-transition gravity acceleration, impulse movement, jumping, coyote/buffer, physical departure, moving platforms, and Box2D world-lock safety.
+  - Full core regression suite expanded to **138/138 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 24 Phase 3F.5, 21 Phase 3F.6).
+
+---
+
+## [0.3.15] - Phase 3F.5.2: Support Capacity Guarantee & Final Device Gate - 2026-11-26
+
+### Changed
+- **Support-Body Capacity Overflow Policy (`Player.java`)**:
+  - Replaced silent ignore on capacity overflow (`MAX_SUPPORT_BODIES_PER_DIR = 8`) with a deterministic zero-allocation LRU eviction + untracked overflow-count fallback policy (`untrackedSupportContacts`).
+  - When a 9th distinct supporting body contacts a directional sensor, the oldest tracked entry is evicted into `untrackedSupportContacts` while the 9th body is tracked at the top of the direction's stack (`getActiveSupportingBody()`).
+  - If all 8 tracked bodies detach while an overflow-evicted contact remains active (`hasSupportOverflow`), `getActiveSupportingBody()` returns `null` (falling back safely to `0.0f` stationary support tangent rather than ever referencing a stale/detached body).
+
+### Added
+- **9th-Body Overflow Regression Tests (`Phase3F5Test.java`)**:
+  - `test23_RealBox2D_NinthDistinctSupportingBody_TriggersOverflowAndSelectsNinthBody`: Verifies 9 simultaneous real Box2D wall contacts on `PLAYER_LEFT_SENSOR`, LRU eviction, active 9th-body velocity tracking, detachment reversion, and clean zeroing.
+  - `test24_SupportOverflow_EvictedOldestRemainsLast_SafeNullFallbackZeroStale`: Verifies safe `null` fallback when only an evicted oldest body remains in contact.
+  - Total test suite expanded to **117/117 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 24 Phase 3F.5).
+
+### Verified
+- **Physical-Device Verification (realme RMX5555, `bf53c7c1`)**:
+  - Executed temporary on-device physics harness covering all 4 gravity directions (`DOWN`, `UP`, `LEFT`, `RIGHT`), grounded acceleration, stopping, direction reversal, jumping while moving, airborne steering, gravity switching while moving and while airborne, gravity-parallel velocity preservation, moving-platform riding without sliding, and airborne detachment without stale velocity (`25/25` checks passed, `0` failed, `0` exceptions). Removed temporary harness and verified clean production build.
+
+---
+
+## [0.3.14] - Phase 3F.5.1: Support-Body Tracking Audit - 2026-11-26
+
+### Fixed
+- **Stale Moving-Platform Reference (`Player.java`)**:
+  - Replaced single-slot `Body[4]` tracking with a preallocated fixed-capacity per-direction stack (`MAX_SUPPORT_BODIES_PER_DIR = 8`) and per-body contact reference counting (`supportBodies`, `supportBodyCounts`, `supportBodyCount`).
+  - When Platform A and Platform B both contact the same directional sensor and Platform B detaches while Platform A remains, Platform B is removed and active support reverts to Platform A immediately instead of retaining a stale reference to Platform B.
+  - Multiple fixtures belonging to the same `Body` increment/decrement that body's reference count, preventing premature invalidation when crossing fixture seams.
+
+### Added
+- **Real Box2D Support-Body Lifecycle Tests (`Phase3F5Test.java`)**:
+  - Added `test21_RealBox2D_TwoBodiesSameSensor_RevertsToRemainingBodyWithoutStaleVelocity` and `test22_RealBox2D_MultipleFixturesSameBody_NoPrematureInvalidation`.
+  - Total test suite expanded to **115/115 passing tests** (32 Phase 3F.1, 9 Phase 3F.2, 12 Phase 3F.3, 40 Phase 3F.4, 22 Phase 3F.5).
+
+---
+
 ## [0.3.13] - Phase 3F.5: Impulse-Based Movement - 2026-11-22
 
 ### Changed

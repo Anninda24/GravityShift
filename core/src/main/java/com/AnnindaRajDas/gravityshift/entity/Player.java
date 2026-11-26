@@ -4,6 +4,7 @@ import com.AnnindaRajDas.gravityshift.config.GameConfig;
 import com.AnnindaRajDas.gravityshift.physics.BodyFactory;
 import com.AnnindaRajDas.gravityshift.physics.Direction;
 import com.AnnindaRajDas.gravityshift.physics.FixtureType;
+import com.AnnindaRajDas.gravityshift.physics.GravityController;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.physics.box2d.Body;
@@ -50,8 +51,12 @@ public class Player extends Entity {
     private int leftContacts = 0;
     private int rightContacts = 0;
 
-    // Support Body References (zero-allocation fixed array indexed by Direction.ordinal())
-    private final Body[] supportingBodies = new Body[4];
+    // Support Body References (zero-allocation fixed-capacity per-direction LRU stack with overflow counter)
+    public static final int MAX_SUPPORT_BODIES_PER_DIR = 8;
+    private final Body[][] supportBodies = new Body[4][MAX_SUPPORT_BODIES_PER_DIR];
+    private final int[][] supportBodyCounts = new int[4][MAX_SUPPORT_BODIES_PER_DIR];
+    private final int[] supportBodyCount = new int[4];
+    private final int[] untrackedSupportContacts = new int[4];
 
     // Reusable Vector for Zero-GC Movement Impulse Application
     private final Vector2 movementImpulse = new Vector2();
@@ -143,15 +148,13 @@ public class Player extends Entity {
 
         // Determine supporting body's tangential velocity (strictly when currently grounded)
         float supportTangentVelocity = 0.0f;
-        if (grounded) {
-            Body supportBody = supportingBodies[supportDirection.ordinal()];
-            if (supportBody != null) {
-                Vector2 supportVel = supportBody.getLinearVelocity();
-                supportTangentVelocity = switch (supportDirection) {
-                    case DOWN, UP -> supportVel.x;
-                    case LEFT, RIGHT -> supportVel.y;
-                };
-            }
+        Body supportBody = getActiveSupportingBody();
+        if (supportBody != null) {
+            Vector2 supportVel = supportBody.getLinearVelocity();
+            supportTangentVelocity = switch (supportDirection) {
+                case DOWN, UP -> supportVel.x;
+                case LEFT, RIGHT -> supportVel.y;
+            };
         }
 
         float desiredTangentSpeed = supportTangentVelocity + moveDirection * MOVE_SPEED;
@@ -334,13 +337,14 @@ public class Player extends Entity {
 
     /**
      * Synchronizes the player's active support direction with the current
-     * world gravity direction.
+     * world gravity direction and enforces the 15 m/s transition momentum cap.
      *
      * Physical contact counters remain untouched. Grounded state immediately
      * reflects whether the newly selected directional sensor has active contacts.
      *
      * @param newGravityDirection the cardinal direction gravity now points
      * @throws IllegalArgumentException if newGravityDirection is null
+     * @throws IllegalStateException    if the physics world is locked
      */
     public void onGravityDirectionChanged(Direction newGravityDirection) {
         if (isDisposed()) {
@@ -355,6 +359,13 @@ public class Player extends Entity {
 
         if (this.supportDirection == newGravityDirection) {
             return;
+        }
+
+        if (body != null) {
+            if (body.getWorld().isLocked()) {
+                throw new IllegalStateException("Cannot change player support direction while the physics world is locked.");
+            }
+            GravityController.clampBodyVelocityToMaxSpeed(body, GameConfig.MAX_GRAVITY_SWITCH_SPEED);
         }
 
         this.supportDirection = newGravityDirection;
@@ -414,7 +425,7 @@ public class Player extends Entity {
         }
 
         if (supportBody != null) {
-            supportingBodies[dir.ordinal()] = supportBody;
+            addSupportBody(dir, supportBody);
         }
 
         incrementContact(dir);
@@ -452,8 +463,12 @@ public class Player extends Entity {
 
         decrementContact(dir);
 
+        if (supportBody != null) {
+            removeSupportBody(dir, supportBody);
+        }
+
         if (getContactCount(dir) == 0) {
-            supportingBodies[dir.ordinal()] = null;
+            clearSupportBodies(dir);
         }
 
         // Complete physical departure requires detaching from ALL active surface contacts
@@ -641,8 +656,8 @@ public class Player extends Entity {
             topContacts = 0;
             leftContacts = 0;
             rightContacts = 0;
-            for (int i = 0; i < supportingBodies.length; i++) {
-                supportingBodies[i] = null;
+            for (Direction dir : Direction.values()) {
+                clearSupportBodies(dir);
             }
             jumpConsumed = false;
             leftSupportSinceLaunch = true;
@@ -651,6 +666,117 @@ public class Player extends Entity {
             moveDirection = 0.0f;
             supportDirection = Direction.DOWN;
         }
+    }
+
+    private void addSupportBody(Direction dir, Body body) {
+        if (dir == null || body == null) {
+            return;
+        }
+        int d = dir.ordinal();
+        int count = supportBodyCount[d];
+
+        for (int i = 0; i < count; i++) {
+            if (supportBodies[d][i] == body) {
+                supportBodyCounts[d][i]++;
+                if (i < count - 1) {
+                    Body existingBody = supportBodies[d][i];
+                    int existingCount = supportBodyCounts[d][i];
+                    for (int j = i; j < count - 1; j++) {
+                        supportBodies[d][j] = supportBodies[d][j + 1];
+                        supportBodyCounts[d][j] = supportBodyCounts[d][j + 1];
+                    }
+                    supportBodies[d][count - 1] = existingBody;
+                    supportBodyCounts[d][count - 1] = existingCount;
+                }
+                return;
+            }
+        }
+
+        if (count < MAX_SUPPORT_BODIES_PER_DIR) {
+            supportBodies[d][count] = body;
+            supportBodyCounts[d][count] = 1;
+            supportBodyCount[d]++;
+        } else {
+            // Safe overflow policy (LRU eviction):
+            // Never silently ignore a new supporting body. Evict the oldest tracked body at index 0,
+            // account for its active contacts in untrackedSupportContacts, shift remaining entries left,
+            // and place the new body at the top of the stack (most recently contacted).
+            untrackedSupportContacts[d] += supportBodyCounts[d][0];
+            for (int j = 0; j < MAX_SUPPORT_BODIES_PER_DIR - 1; j++) {
+                supportBodies[d][j] = supportBodies[d][j + 1];
+                supportBodyCounts[d][j] = supportBodyCounts[d][j + 1];
+            }
+            supportBodies[d][MAX_SUPPORT_BODIES_PER_DIR - 1] = body;
+            supportBodyCounts[d][MAX_SUPPORT_BODIES_PER_DIR - 1] = 1;
+        }
+    }
+
+    private void removeSupportBody(Direction dir, Body body) {
+        if (dir == null || body == null) {
+            return;
+        }
+        int d = dir.ordinal();
+        int count = supportBodyCount[d];
+
+        for (int i = 0; i < count; i++) {
+            if (supportBodies[d][i] == body) {
+                supportBodyCounts[d][i]--;
+                if (supportBodyCounts[d][i] <= 0) {
+                    for (int j = i; j < count - 1; j++) {
+                        supportBodies[d][j] = supportBodies[d][j + 1];
+                        supportBodyCounts[d][j] = supportBodyCounts[d][j + 1];
+                    }
+                    supportBodies[d][count - 1] = null;
+                    supportBodyCounts[d][count - 1] = 0;
+                    supportBodyCount[d]--;
+                }
+                return;
+            }
+        }
+
+        // Body was previously evicted due to capacity overflow; reconcile untracked contact count
+        if (untrackedSupportContacts[d] > 0) {
+            untrackedSupportContacts[d]--;
+        }
+    }
+
+    private void clearSupportBodies(Direction dir) {
+        if (dir == null) {
+            return;
+        }
+        int d = dir.ordinal();
+        for (int i = 0; i < supportBodyCount[d]; i++) {
+            supportBodies[d][i] = null;
+            supportBodyCounts[d][i] = 0;
+        }
+        supportBodyCount[d] = 0;
+        untrackedSupportContacts[d] = 0;
+    }
+
+    /**
+     * Returns whether evicted untracked supporting contacts remain active for the given direction.
+     *
+     * @param direction direction to query
+     * @return true if overflow-evicted contacts remain active
+     */
+    public boolean hasSupportOverflow(Direction direction) {
+        if (direction == null) {
+            return false;
+        }
+        return untrackedSupportContacts[direction.ordinal()] > 0;
+    }
+
+    /**
+     * Returns the count of active contacts belonging to overflow-evicted bodies for the given direction.
+     *
+     * @param direction direction to query
+     * @return untracked overflow contact count
+     */
+    public int getUntrackedSupportContactCount(Direction direction) {
+        if (direction == null) {
+            return 0;
+        }
+        return untrackedSupportContacts[direction.ordinal()];
     }
 
     /**
@@ -663,7 +789,22 @@ public class Player extends Entity {
         if (direction == null) {
             return null;
         }
-        return supportingBodies[direction.ordinal()];
+        int d = direction.ordinal();
+        int count = supportBodyCount[d];
+        return (count > 0) ? supportBodies[d][count - 1] : null;
+    }
+
+    /**
+     * Returns the number of distinct active supporting bodies tracked along the specified direction.
+     *
+     * @param direction direction to query
+     * @return number of tracked supporting bodies
+     */
+    public int getTrackedBodyCount(Direction direction) {
+        if (direction == null) {
+            return 0;
+        }
+        return supportBodyCount[direction.ordinal()];
     }
 
     /**
@@ -672,7 +813,12 @@ public class Player extends Entity {
      * @return currently active supporting body or null
      */
     public Body getActiveSupportingBody() {
-        return isGrounded() ? supportingBodies[supportDirection.ordinal()] : null;
+        if (!isGrounded()) {
+            return null;
+        }
+        int d = supportDirection.ordinal();
+        int count = supportBodyCount[d];
+        return (count > 0) ? supportBodies[d][count - 1] : null;
     }
 
     public float getWidth() {

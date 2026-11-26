@@ -31,8 +31,9 @@ public final class GameConfig {
     public static final float MAX_FRAME_TIME = MAX_FRAME_DELTA; // Backward compatibility alias
     public static final int MAX_PHYSICS_STEPS_PER_FRAME = 6;
 
-    // Global Gravity Magnitude (m/s^2)
+    // Global Gravity & Momentum Constants
     public static final float GRAVITY_MAGNITUDE = 9.81f;
+    public static final float MAX_GRAVITY_SWITCH_SPEED = 15.0f; // 15 m/s cap on gravity transition
 
     // Physics Material Defaults
     public static final float DEFAULT_DENSITY = 1.0f;

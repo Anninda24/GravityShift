@@ -16,6 +16,7 @@ import com.badlogic.gdx.physics.box2d.Box2D;
 import com.badlogic.gdx.physics.box2d.FixtureDef;
 import com.badlogic.gdx.physics.box2d.PolygonShape;
 import com.badlogic.gdx.physics.box2d.World;
+import com.badlogic.gdx.utils.GdxNativesLoader;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -54,6 +55,7 @@ public class Phase3F5Test {
 
     @BeforeAll
     public static void initBox2D() {
+        GdxNativesLoader.load();
         Box2D.init();
     }
 
@@ -663,5 +665,308 @@ public class Phase3F5Test {
         assertTrue(player.getPosition().x > 5.0f, "Player position must have advanced rightward");
 
         pc.dispose();
+    }
+
+    // 21. Real Box2D lifecycle: two bodies on same sensor; B enters then leaves while A remains
+    @Test
+    public void test21_RealBox2D_TwoBodiesSameSensor_RevertsToRemainingBodyWithoutStaleVelocity() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        world.setContactListener(new GameContactListener());
+        BodyFactory bf = new BodyFactory(world);
+
+        // Platform A: wide kinematic floor moving at vx = 2.0 m/s (x=0..25, y=0..1.0, top=1.0)
+        Body platformA = createKinematicPlatform(world, 0f, 0f, 25f, 1.0f, 2.0f, 0.0f, FixtureType.GROUND);
+
+        // Platform B: kinematic platform initially overlapping bottom sensor (top=0.98m, inside sensor [0.95..1.05])
+        // with vx = 8.0 m/s, vy = -1.0 m/s so it initially registers contact, then descends cleanly out of sensor range
+        Body platformB = createKinematicPlatform(world, 4.0f, 0.0f, 4.0f, 0.98f, 8.0f, -1.0f, FixtureType.GROUND);
+
+        // Player spawned at x=5.0, y=1.0 (bottom sensor touches both Platform A and Platform B)
+        Player player = Player.create(bf, 5.0f, 1.0f);
+        player.onGravityDirectionChanged(Direction.DOWN);
+
+        // Step 1: Both Platform A and Platform B are in contact (A registered first, then B)
+        player.onPrePhysicsStep(DT);
+        world.step(DT, 8, 3);
+        player.onPostPhysicsStep(DT);
+
+        assertEquals(2, player.getContactCount(Direction.DOWN),
+            "Both Platform A and Platform B must contact bottom sensor");
+        assertEquals(2, player.getTrackedBodyCount(Direction.DOWN));
+        // Platform B was created second so Box2D reports it after A (or if either order, both are tracked)
+        Body secondBody = player.getActiveSupportingBody();
+        assertNotNull(secondBody);
+
+        // Advance simulation until Platform B descends below bottom sensor (y < 0.95) and breaks contact
+        boolean leftB = false;
+        for (int i = 0; i < 30; i++) {
+            player.onPrePhysicsStep(DT);
+            world.step(DT, 8, 3);
+            player.onPostPhysicsStep(DT);
+            if (player.getContactCount(Direction.DOWN) == 1) {
+                leftB = true;
+                break;
+            }
+        }
+        assertTrue(leftB, "Platform B must exit contact while Platform A remains");
+        assertEquals(1, player.getTrackedBodyCount(Direction.DOWN));
+        assertNotSame(platformB, player.getActiveSupportingBody(),
+            "Active support must NOT remain stale reference to detached Platform B");
+        assertSame(platformA, player.getActiveSupportingBody(),
+            "Active support must revert to remaining valid Platform A");
+
+        // Stand still (moveDirection = 0): player must converge to Platform A's velocity (2.0 m/s), NOT B's (12.0 m/s)
+        player.setMoveDirection(0.0f);
+        for (int i = 0; i < 30; i++) {
+            player.onPrePhysicsStep(DT);
+            world.step(DT, 8, 3);
+            player.onPostPhysicsStep(DT);
+        }
+        assertEquals(2.0f, player.getBody().getLinearVelocity().x, 0.25f,
+            "Player standing on remaining Platform A must track A's velocity (2.0 m/s), not stale B velocity");
+
+        // Jump off Platform A into air and verify support clears completely
+        assertTrue(player.jump());
+        for (int i = 0; i < 10; i++) {
+            player.onPrePhysicsStep(DT);
+            world.step(DT, 8, 3);
+            player.onPostPhysicsStep(DT);
+        }
+        assertFalse(player.isGrounded());
+        assertEquals(0, player.getTrackedBodyCount(Direction.DOWN));
+        assertNull(player.getActiveSupportingBody(), "Airborne player must have null active supporting body");
+
+        world.dispose();
+    }
+
+    // 22. Real Box2D lifecycle: multiple fixtures on the same body do not cause premature invalidation
+    @Test
+    public void test22_RealBox2D_MultipleFixturesSameBody_NoPrematureInvalidation() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        world.setContactListener(new GameContactListener());
+        BodyFactory bf = new BodyFactory(world);
+
+        // Create a single kinematic body with TWO adjacent GROUND fixtures (seam at x = 5.0)
+        BodyDef bd = new BodyDef();
+        bd.type = BodyDef.BodyType.KinematicBody;
+        bd.position.set(5.0f, 0.5f);
+        Body dualFixturePlatform = world.createBody(bd);
+
+        PolygonShape leftShape = new PolygonShape();
+        leftShape.setAsBox(1.5f, 0.5f, new Vector2(-1.5f, 0.0f), 0.0f); // x in [2.0, 5.0], y in [0.0, 1.0]
+        FixtureDef fd1 = new FixtureDef();
+        fd1.shape = leftShape;
+        fd1.friction = 0.0f;
+        dualFixturePlatform.createFixture(fd1).setUserData(FixtureType.GROUND);
+        leftShape.dispose();
+
+        PolygonShape rightShape = new PolygonShape();
+        rightShape.setAsBox(1.5f, 0.5f, new Vector2(1.5f, 0.0f), 0.0f); // x in [5.0, 8.0], y in [0.0, 1.0]
+        FixtureDef fd2 = new FixtureDef();
+        fd2.shape = rightShape;
+        fd2.friction = 0.0f;
+        dualFixturePlatform.createFixture(fd2).setUserData(FixtureType.GROUND);
+        rightShape.dispose();
+
+        dualFixturePlatform.setLinearVelocity(3.0f, 0.0f);
+
+        // Spawn player centered right over the seam at x = 5.0 (bottom-left x = 4.6)
+        Player player = Player.create(bf, 4.6f, 1.0f);
+        player.onGravityDirectionChanged(Direction.DOWN);
+
+        // Step 1: bottom sensor overlaps BOTH fixtures of dualFixturePlatform
+        player.onPrePhysicsStep(DT);
+        world.step(DT, 8, 3);
+        player.onPostPhysicsStep(DT);
+
+        assertEquals(2, player.getContactCount(Direction.DOWN),
+            "Both fixtures of the same body must register contacts on bottom sensor");
+        assertEquals(1, player.getTrackedBodyCount(Direction.DOWN),
+            "Both fixtures belong to 1 distinct Body");
+        assertSame(dualFixturePlatform, player.getActiveSupportingBody());
+
+        // Move rightward relative to platform so player leaves the left fixture while remaining on the right fixture
+        player.setMoveDirection(1.0f);
+        boolean leftOneFixture = false;
+        for (int i = 0; i < 40; i++) {
+            player.onPrePhysicsStep(DT);
+            world.step(DT, 8, 3);
+            player.onPostPhysicsStep(DT);
+            if (player.getContactCount(Direction.DOWN) == 1) {
+                leftOneFixture = true;
+                break;
+            }
+        }
+        assertTrue(leftOneFixture, "Player must leave left fixture while staying on right fixture");
+        assertTrue(player.isGrounded());
+        assertEquals(1, player.getTrackedBodyCount(Direction.DOWN));
+        assertSame(dualFixturePlatform, player.getActiveSupportingBody(),
+            "Ending 1 of 2 fixtures on the same body must NOT prematurely invalidate the body");
+
+        // Jump off the remaining fixture and verify complete detachment
+        assertTrue(player.jump());
+        for (int i = 0; i < 10; i++) {
+            player.onPrePhysicsStep(DT);
+            world.step(DT, 8, 3);
+            player.onPostPhysicsStep(DT);
+        }
+        assertFalse(player.isGrounded());
+        assertEquals(0, player.getContactCount(Direction.DOWN));
+        assertEquals(0, player.getTrackedBodyCount(Direction.DOWN));
+        assertNull(player.getActiveSupportingBody());
+
+        world.dispose();
+    }
+
+    // 23. Real Box2D lifecycle: ninth distinct supporting body triggers safe LRU overflow and never gets ignored
+    @Test
+    public void test23_RealBox2D_NinthDistinctSupportingBody_TriggersOverflowAndSelectsNinthBody() {
+        World world = new World(new Vector2(-9.81f, 0f), true);
+        world.setContactListener(new GameContactListener());
+        BodyFactory bf = new BodyFactory(world);
+
+        // Left wall sensor height = 1.2m (y in [2.1 .. 3.3] when player spawned at y = 2.0)
+        // Create 8 small stationary kinematic wall tiles (0.08m tall each) inside sensor vertical range
+        Body[] segments = new Body[9];
+        for (int i = 0; i < 8; i++) {
+            float segY = 2.15f + i * 0.13f; // spans 2.15 .. 3.14 inside [2.1 .. 3.3]
+            segments[i] = createKinematicPlatform(world, 0.5f, segY, 0.5f, 0.08f, 0.0f, 0.0f, FixtureType.WALL);
+        }
+
+        // Player pressed against left wall at x = 1.0 (left sensor [0.95..1.05] contacts segments 0..7)
+        Player player = Player.create(bf, 1.0f, 2.0f);
+        player.onGravityDirectionChanged(Direction.LEFT);
+
+        player.onPrePhysicsStep(DT);
+        world.step(DT, 8, 3);
+        player.onPostPhysicsStep(DT);
+
+        assertEquals(8, player.getContactCount(Direction.LEFT), "First 8 distinct wall bodies must contact left sensor");
+        assertEquals(8, player.getTrackedBodyCount(Direction.LEFT));
+        assertFalse(player.hasSupportOverflow(Direction.LEFT));
+        assertEquals(0, player.getUntrackedSupportContactCount(Direction.LEFT));
+
+        // Introduce 9th distinct kinematic body (moving upward at vy = 4.0 m/s) sliding into left sensor at x=0.45..0.98
+        // Initially spawned just outside sensor at x = 0.40..0.90 moving right at vx = 3.0 m/s into sensor, then stop X
+        segments[8] = createKinematicPlatform(world, 0.42f, 3.19f, 0.50f, 0.08f, 3.0f, 4.0f, FixtureType.WALL);
+
+        boolean reachedNine = false;
+        for (int i = 0; i < 15; i++) {
+            // Keep player vertically aligned with segments during contact check
+            player.getBody().setTransform(player.getBody().getPosition().x, 2.7f, 0.0f);
+            player.getBody().setLinearVelocity(0.0f, 0.0f);
+            if (i == 2) {
+                // After stepping into sensor [0.95..1.05], stop horizontal motion of 9th segment so it stays cleanly
+                segments[8].setLinearVelocity(0.0f, 0.0f);
+            }
+            player.onPrePhysicsStep(DT);
+            world.step(DT, 8, 3);
+            player.onPostPhysicsStep(DT);
+            if (player.getContactCount(Direction.LEFT) == 9) {
+                reachedNine = true;
+                break;
+            }
+        }
+        assertTrue(reachedNine, "9th distinct wall body must contact left sensor simultaneously with first 8");
+        assertEquals(Player.MAX_SUPPORT_BODIES_PER_DIR, player.getTrackedBodyCount(Direction.LEFT));
+        assertTrue(player.hasSupportOverflow(Direction.LEFT), "Overflow flag must indicate evicted contact");
+        assertEquals(1, player.getUntrackedSupportContactCount(Direction.LEFT));
+        assertSame(segments[8], player.getActiveSupportingBody(),
+            "9th body must NOT be silently ignored; LRU policy must evict oldest and select 9th body");
+
+        // Assign tangential velocity vy = 4.0 m/s to 9th body (keeping it inside y [2.1..3.3] for a step)
+        segments[8].setLinearVelocity(0.0f, 4.0f);
+        player.setMoveDirection(0.0f);
+        player.getBody().setLinearVelocity(0.0f, 0.0f);
+        player.onPrePhysicsStep(DT);
+        assertEquals(Player.MAX_GROUND_ACCEL * DT, player.getBody().getLinearVelocity().y, EPS,
+            "Movement impulse must track the newly selected 9th body's upward velocity");
+
+        // Move 9th body leftward out of sensor contact while 1..8 remain
+        segments[8].setLinearVelocity(-6.0f, 0.0f);
+        boolean detachedNinth = false;
+        for (int i = 0; i < 15; i++) {
+            player.getBody().setLinearVelocity(0.0f, 0.0f);
+            player.onPrePhysicsStep(DT);
+            world.step(DT, 8, 3);
+            player.onPostPhysicsStep(DT);
+            if (player.getContactCount(Direction.LEFT) == 8) {
+                detachedNinth = true;
+                break;
+            }
+        }
+        assertTrue(detachedNinth, "9th body must detach cleanly");
+        assertNotSame(segments[8], player.getActiveSupportingBody(),
+            "Detached 9th body must NOT remain active support");
+        assertNotNull(player.getActiveSupportingBody(),
+            "Remaining tracked wall body must become active support");
+
+        // Detach all bodies (move player rightward away from wall)
+        player.getBody().setTransform(5.0f, 2.7f, 0.0f);
+        player.onPrePhysicsStep(DT);
+        world.step(DT, 8, 3);
+        player.onPostPhysicsStep(DT);
+
+        assertEquals(0, player.getContactCount(Direction.LEFT));
+        assertEquals(0, player.getTrackedBodyCount(Direction.LEFT));
+        assertFalse(player.hasSupportOverflow(Direction.LEFT));
+        assertEquals(0, player.getUntrackedSupportContactCount(Direction.LEFT));
+        assertNull(player.getActiveSupportingBody());
+
+        world.dispose();
+    }
+
+    // 24. Support overflow fallback: if all tracked bodies detach leaving only an evicted contact, never use stale velocity
+    @Test
+    public void test24_SupportOverflow_EvictedOldestRemainsLast_SafeNullFallbackZeroStale() {
+        World world = new World(new Vector2(0f, -9.81f), true);
+        BodyFactory bf = new BodyFactory(world);
+        Player player = Player.create(bf, 5.0f, 2.0f);
+
+        // Create 9 kinematic platforms (B0..B8), B0 at vx=1.0, B1..B8 at vx=5.0
+        Body[] platforms = new Body[9];
+        for (int i = 0; i < 9; i++) {
+            platforms[i] = createKinematicPlatform(world, 0f, 0f, 10f, 1f, (i == 0) ? 1.0f : 5.0f, 0.0f, FixtureType.GROUND);
+        }
+
+        // Contact B0..B7 (fills capacity 8)
+        for (int i = 0; i < 8; i++) {
+            player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR, platforms[i]);
+        }
+        assertFalse(player.hasSupportOverflow(Direction.DOWN));
+        assertSame(platforms[7], player.getActiveSupportingBody());
+
+        // Contact B8 -> B0 is evicted into untracked overflow; B8 becomes active
+        player.onSensorContactBegin(FixtureType.PLAYER_BOTTOM_SENSOR, platforms[8]);
+        assertTrue(player.hasSupportOverflow(Direction.DOWN));
+        assertEquals(1, player.getUntrackedSupportContactCount(Direction.DOWN));
+        assertEquals(8, player.getTrackedBodyCount(Direction.DOWN));
+        assertSame(platforms[8], player.getActiveSupportingBody());
+
+        // Detach B1..B8 (leaving ONLY evicted B0 still in contact)
+        for (int i = 1; i < 9; i++) {
+            player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR, platforms[i]);
+        }
+        assertEquals(1, player.getContactCount(Direction.DOWN));
+        assertTrue(player.isGrounded());
+        assertEquals(0, player.getTrackedBodyCount(Direction.DOWN));
+        assertEquals(1, player.getUntrackedSupportContactCount(Direction.DOWN));
+        assertNull(player.getActiveSupportingBody(),
+            "Safe overflow fallback must return null rather than any detached B1..B8 body");
+
+        // Verify standing still uses 0.0f fallback, NOT stale 5.0 m/s from detached platforms
+        player.getBody().setLinearVelocity(0.0f, 0.0f);
+        player.setMoveDirection(0.0f);
+        player.onPrePhysicsStep(DT);
+        assertEquals(0.0f, player.getBody().getLinearVelocity().x, EPS,
+            "Must NOT inherit stale velocity from detached B1..B8");
+
+        // Finally detach B0 -> overflow and contacts cleanly drop to zero
+        player.onSensorContactEnd(FixtureType.PLAYER_BOTTOM_SENSOR, platforms[0]);
+        assertFalse(player.isGrounded());
+        assertFalse(player.hasSupportOverflow(Direction.DOWN));
+        assertEquals(0, player.getUntrackedSupportContactCount(Direction.DOWN));
+
+        world.dispose();
     }
 }

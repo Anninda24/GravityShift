@@ -18,12 +18,15 @@ import com.badlogic.gdx.utils.Array;
  */
 public class GravityController {
 
+    public static final float MAX_GRAVITY_SWITCH_SPEED = GameConfig.MAX_GRAVITY_SWITCH_SPEED;
+
     private final World world;
     private final float magnitude;
     private Direction currentDirection;
 
-    // Reusable cache to retrieve world bodies without per-shift heap allocations
+    // Reusable caches to avoid per-shift heap allocations
     private final Array<Body> bodiesCache = new Array<>();
+    private final Vector2 gravityVectorBuffer = new Vector2();
 
     /**
      * Constructs a GravityController using the default global gravity magnitude.
@@ -59,8 +62,9 @@ public class GravityController {
 
     /**
      * Shifts global world gravity to the specified cardinal direction.
-     * Wakes all sleeping dynamic bodies while preserving their existing velocities.
-     * Rejects changes while the simulation world is locked.
+     * Validates that the world is unlocked, clamps any dynamic body speeds exceeding
+     * MAX_GRAVITY_SWITCH_SPEED (15 m/s) while preserving direction, switches world gravity,
+     * and wakes all dynamic bodies.
      *
      * @param direction target gravity direction (DOWN, UP, LEFT, RIGHT)
      * @throws IllegalArgumentException if direction is null
@@ -76,26 +80,92 @@ public class GravityController {
             return;
         }
 
+        // 1. Validate that the physics world is not locked
         if (world.isLocked()) {
             throw new IllegalStateException("Cannot change gravity while the physics world is locked.");
         }
 
-        // Calculate and apply new Box2D world gravity vector
-        Vector2 newGravityVector = calculateGravityVector(direction);
-        world.setGravity(newGravityVector);
+        // 2-4. Read current world-space velocities and clamp magnitude > 15 m/s while preserving direction
+        bodiesCache.clear();
+        world.getBodies(bodiesCache);
+        for (int i = 0; i < bodiesCache.size; i++) {
+            Body body = bodiesCache.get(i);
+            if (body.getType() == BodyType.DynamicBody) {
+                clampBodyVelocityToMaxSpeed(body, MAX_GRAVITY_SWITCH_SPEED);
+            }
+        }
+
+        // 5. Change the Box2D world gravity vector
+        setGravityVectorBuffer(direction);
+        world.setGravity(gravityVectorBuffer);
         this.currentDirection = direction;
 
-        // Wake all dynamic bodies so they immediately respond to the new gravity field
-        wakeDynamicBodies();
+        // 6. Wake all dynamic bodies so they immediately respond to the new gravity field
+        wakeDynamicBodiesCached();
     }
 
     /**
-     * Wakes all dynamic bodies in the world while leaving static and kinematic bodies untouched.
-     * Existing linear and angular velocities are preserved.
+     * Clamps a dynamic body's world-space linear velocity magnitude to at most maxSpeed,
+     * preserving travel direction and leaving speeds <= maxSpeed untouched.
+     * Allocation-free and safe against zero velocity or non-finite inputs.
+     *
+     * @param body     the Box2D body to inspect and clamp if necessary
+     * @param maxSpeed maximum permitted speed in m/s
      */
-    private void wakeDynamicBodies() {
-        bodiesCache.clear();
-        world.getBodies(bodiesCache);
+    public static void clampBodyVelocityToMaxSpeed(Body body, float maxSpeed) {
+        if (body == null || body.getType() != BodyType.DynamicBody) {
+            return;
+        }
+        if (!Float.isFinite(maxSpeed) || maxSpeed <= 0.0f) {
+            return;
+        }
+        Vector2 velocity = body.getLinearVelocity();
+        float vx = velocity.x;
+        float vy = velocity.y;
+        if (!Float.isFinite(vx) || !Float.isFinite(vy)) {
+            body.setLinearVelocity(0.0f, 0.0f);
+            return;
+        }
+        double speedSq = (double) vx * vx + (double) vy * vy;
+        double maxSpeedSq = (double) maxSpeed * maxSpeed;
+        if (speedSq <= maxSpeedSq) {
+            return;
+        }
+        double speed = Math.sqrt(speedSq);
+        if (speed <= 0.0 || !Double.isFinite(speed)) {
+            return;
+        }
+        double scale = (double) maxSpeed / speed;
+        float newVx = (float) (vx * scale);
+        float newVy = (float) (vy * scale);
+
+        // Guard against 1-ULP upward float32 rounding causing speedSq > maxSpeedSq
+        if ((double) newVx * newVx + (double) newVy * newVy > maxSpeedSq) {
+            double safeScale = Math.nextDown(scale);
+            newVx = (float) (vx * safeScale);
+            newVy = (float) (vy * safeScale);
+            if ((double) newVx * newVx + (double) newVy * newVy > maxSpeedSq) {
+                newVx = (newVx > 0.0f) ? Math.nextDown(newVx) : ((newVx < 0.0f) ? Math.nextUp(newVx) : 0.0f);
+                newVy = (newVy > 0.0f) ? Math.nextDown(newVy) : ((newVy < 0.0f) ? Math.nextUp(newVy) : 0.0f);
+            }
+        }
+        body.setLinearVelocity(newVx, newVy);
+    }
+
+    private void setGravityVectorBuffer(Direction dir) {
+        switch (dir) {
+            case DOWN -> gravityVectorBuffer.set(0.0f, -magnitude);
+            case UP -> gravityVectorBuffer.set(0.0f, magnitude);
+            case LEFT -> gravityVectorBuffer.set(-magnitude, 0.0f);
+            case RIGHT -> gravityVectorBuffer.set(magnitude, 0.0f);
+        }
+    }
+
+    /**
+     * Wakes all dynamic bodies currently cached in bodiesCache while leaving static and kinematic
+     * bodies untouched. Existing linear and angular velocities are preserved.
+     */
+    private void wakeDynamicBodiesCached() {
         for (int i = 0; i < bodiesCache.size; i++) {
             Body body = bodiesCache.get(i);
             if (body.getType() == BodyType.DynamicBody) {
