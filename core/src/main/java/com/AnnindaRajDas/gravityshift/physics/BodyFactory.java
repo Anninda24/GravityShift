@@ -26,6 +26,10 @@ public class BodyFactory {
         this.world = world;
     }
 
+    public World getWorld() {
+        return world;
+    }
+
     /**
      * Creates a static rectangular physics body with default friction and restitution,
      * tagged as GROUND by default.

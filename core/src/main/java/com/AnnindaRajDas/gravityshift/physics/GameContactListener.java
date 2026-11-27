@@ -1,6 +1,8 @@
 package com.AnnindaRajDas.gravityshift.physics;
 
+import com.AnnindaRajDas.gravityshift.entity.LaserHazard;
 import com.AnnindaRajDas.gravityshift.entity.Player;
+import com.AnnindaRajDas.gravityshift.entity.PressurePlate;
 import com.badlogic.gdx.physics.box2d.Body;
 import com.badlogic.gdx.physics.box2d.Contact;
 import com.badlogic.gdx.physics.box2d.ContactImpulse;
@@ -59,6 +61,50 @@ public class GameContactListener implements ContactListener {
                 notifyPlayer(fixtureA, typeA, fixtureB, isBegin);
             } else if (typeB.isPlayerSensor() && typeB.isCompatibleWith(typeA)) {
                 notifyPlayer(fixtureB, typeB, fixtureA, isBegin);
+            }
+
+            if (typeA == FixtureType.PRESSURE_PLATE_SENSOR && isPlateActivator(typeB)) {
+                notifyPressurePlate(fixtureA, fixtureB, isBegin);
+            } else if (typeB == FixtureType.PRESSURE_PLATE_SENSOR && isPlateActivator(typeA)) {
+                notifyPressurePlate(fixtureB, fixtureA, isBegin);
+            }
+
+            if (typeA == FixtureType.HAZARD_LASER && typeB == FixtureType.PLAYER_BODY) {
+                notifyLaserHazard(fixtureA, isBegin);
+            } else if (typeB == FixtureType.HAZARD_LASER && typeA == FixtureType.PLAYER_BODY) {
+                notifyLaserHazard(fixtureB, isBegin);
+            }
+        }
+    }
+
+    private static boolean isPlateActivator(FixtureType type) {
+        return type == FixtureType.PLAYER_BODY || type == FixtureType.GRAVITY_CUBE;
+    }
+
+    private void notifyPressurePlate(Fixture plateFixture, Fixture activatorFixture, boolean isBegin) {
+        if (plateFixture.getBody() == null) {
+            return;
+        }
+        Object bodyUserData = plateFixture.getBody().getUserData();
+        if (bodyUserData instanceof PressurePlate plate && !plate.isDisposed()) {
+            if (isBegin) {
+                plate.onSensorContactBegin(activatorFixture);
+            } else {
+                plate.onSensorContactEnd(activatorFixture);
+            }
+        }
+    }
+
+    private void notifyLaserHazard(Fixture hazardFixture, boolean isBegin) {
+        if (hazardFixture.getBody() == null) {
+            return;
+        }
+        Object bodyUserData = hazardFixture.getBody().getUserData();
+        if (bodyUserData instanceof LaserHazard hazard && !hazard.isDisposed()) {
+            if (isBegin) {
+                hazard.onPlayerContactBegin();
+            } else {
+                hazard.onPlayerContactEnd();
             }
         }
     }

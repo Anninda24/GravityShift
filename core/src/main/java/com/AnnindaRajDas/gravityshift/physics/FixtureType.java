@@ -27,7 +27,19 @@ public enum FixtureType {
     PLAYER_LEFT_SENSOR,
 
     /** Trigger sensor attached to the player right side for rightward support detection */
-    PLAYER_RIGHT_SENSOR;
+    PLAYER_RIGHT_SENSOR,
+
+    /** Movable gravity-responsive puzzle cube */
+    GRAVITY_CUBE,
+
+    /** Sensor fixture for a puzzle pressure plate */
+    PRESSURE_PLATE_SENSOR,
+
+    /** Logic-driven sliding door */
+    SLIDING_DOOR,
+
+    /** Lethal laser hazard sensor */
+    HAZARD_LASER;
 
     /**
      * Checks if this fixture type represents one of the player's directional support sensors.

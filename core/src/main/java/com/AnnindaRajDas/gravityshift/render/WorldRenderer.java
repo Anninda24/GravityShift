@@ -3,7 +3,11 @@ package com.AnnindaRajDas.gravityshift.render;
 import com.AnnindaRajDas.gravityshift.config.GameConfig;
 import com.AnnindaRajDas.gravityshift.entity.Entity;
 import com.AnnindaRajDas.gravityshift.entity.EntityManager;
+import com.AnnindaRajDas.gravityshift.entity.GravityCube;
+import com.AnnindaRajDas.gravityshift.entity.LaserHazard;
 import com.AnnindaRajDas.gravityshift.entity.Player;
+import com.AnnindaRajDas.gravityshift.entity.PressurePlate;
+import com.AnnindaRajDas.gravityshift.entity.SlidingDoor;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
@@ -173,6 +177,38 @@ public class WorldRenderer implements Disposable {
                 float visorX = x + (player.getWidth() - visorWidth) / 2.0f;
                 float visorY = y + player.getHeight() * 0.65f;
                 shapeRenderer.rect(visorX, visorY, visorWidth, visorHeight);
+            } else if (entity instanceof GravityCube cube) {
+                float x = cube.getInterpolatedX(alpha) - cube.getWidth() / 2.0f;
+                float y = cube.getInterpolatedY(alpha) - cube.getHeight() / 2.0f;
+                shapeRenderer.setColor(0.35f, 0.72f, 0.95f, 1.0f);
+                shapeRenderer.rect(x, y, cube.getWidth(), cube.getHeight());
+            } else if (entity instanceof PressurePlate plate) {
+                float x = plate.getX() - plate.getWidth() / 2.0f;
+                float y = plate.getY() - plate.getHeight() / 2.0f;
+                if (plate.isPressed()) {
+                    shapeRenderer.setColor(0.25f, 0.90f, 0.45f, 1.0f);
+                } else {
+                    shapeRenderer.setColor(0.85f, 0.65f, 0.20f, 1.0f);
+                }
+                shapeRenderer.rect(x, y, plate.getWidth(), plate.getHeight());
+            } else if (entity instanceof SlidingDoor door) {
+                float x = door.getX() - door.getWidth() / 2.0f;
+                float y = door.getY() - door.getHeight() / 2.0f;
+                if (door.isOpen()) {
+                    shapeRenderer.setColor(0.25f, 0.80f, 0.55f, 0.22f);
+                } else {
+                    shapeRenderer.setColor(0.75f, 0.30f, 0.35f, 0.95f);
+                }
+                shapeRenderer.rect(x, y, door.getWidth(), door.getHeight());
+            } else if (entity instanceof LaserHazard hazard) {
+                float x = hazard.getX() - hazard.getWidth() / 2.0f;
+                float y = hazard.getY() - hazard.getHeight() / 2.0f;
+                if (hazard.isActive()) {
+                    shapeRenderer.setColor(1.0f, 0.18f, 0.22f, 0.90f);
+                } else {
+                    shapeRenderer.setColor(0.45f, 0.18f, 0.20f, 0.25f);
+                }
+                shapeRenderer.rect(x, y, hazard.getWidth(), hazard.getHeight());
             }
         }
         shapeRenderer.end();

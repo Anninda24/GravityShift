@@ -6,7 +6,11 @@ import com.AnnindaRajDas.gravityshift.debug.DebugOverlay;
 import com.AnnindaRajDas.gravityshift.debug.FallbackRuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.debug.RuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.entity.EntityManager;
+import com.AnnindaRajDas.gravityshift.entity.GravityCube;
+import com.AnnindaRajDas.gravityshift.entity.LaserHazard;
 import com.AnnindaRajDas.gravityshift.entity.Player;
+import com.AnnindaRajDas.gravityshift.entity.PressurePlate;
+import com.AnnindaRajDas.gravityshift.entity.SlidingDoor;
 import com.AnnindaRajDas.gravityshift.input.CompositeInputProvider;
 import com.AnnindaRajDas.gravityshift.input.KeyboardInput;
 import com.AnnindaRajDas.gravityshift.input.PlayerInputController;
@@ -14,6 +18,7 @@ import com.AnnindaRajDas.gravityshift.input.TouchHud;
 import com.AnnindaRajDas.gravityshift.input.TouchInput;
 import com.AnnindaRajDas.gravityshift.physics.Direction;
 import com.AnnindaRajDas.gravityshift.physics.PhysicsController;
+import com.AnnindaRajDas.gravityshift.puzzle.TriggerBus;
 import com.AnnindaRajDas.gravityshift.render.WorldRenderer;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
@@ -37,6 +42,12 @@ public class PlayScreen extends BaseScreen {
     private final Box2DDebugRenderer debugRenderer;
     private final Stage hudStage;
     private final Player player;
+    private final TriggerBus triggerBus;
+    private final GravityCube gravityCube;
+    private final PressurePlate pressurePlate;
+    private final SlidingDoor slidingDoor;
+    private final LaserHazard laserHazard;
+    private boolean pendingRespawn = false;
     private final KeyboardInput keyboardInput;
     private final TouchInput touchInput;
     private final CompositeInputProvider inputProvider;
@@ -62,6 +73,16 @@ public class PlayScreen extends BaseScreen {
 
         // Spawn player at (x=3.0m, y=5.0m) above the ground platform
         this.player = Player.create(physicsController.getBodyFactory(), 3.0f, 5.0f);
+        this.triggerBus = new TriggerBus();
+        this.gravityCube = GravityCube.create(physicsController.getBodyFactory(), 6.5f, 1.5f);
+        this.pressurePlate = PressurePlate.create(
+                physicsController.getBodyFactory(), 11.0f, 1.0f, 2.0f, 0.25f, "door_1", triggerBus);
+        this.slidingDoor = SlidingDoor.create(
+                physicsController.getBodyFactory(), 16.0f, 1.0f, 0.6f, 3.5f, "door_1", triggerBus);
+        this.laserHazard = LaserHazard.create(
+                physicsController.getBodyFactory(), 9.0f, 9.5f, 2.0f, 0.35f,
+                () -> pendingRespawn = true);
+
         this.keyboardInput = new KeyboardInput();
         this.touchInput = new TouchInput();
         this.inputProvider = new CompositeInputProvider(keyboardInput, touchInput);
@@ -71,6 +92,10 @@ public class PlayScreen extends BaseScreen {
                 ? new InputMultiplexer(this.hudStage, this.touchInput)
                 : new InputMultiplexer(this.touchInput);
         this.entityManager.addEntity(player);
+        this.entityManager.addEntity(gravityCube);
+        this.entityManager.addEntity(pressurePlate);
+        this.entityManager.addEntity(slidingDoor);
+        this.entityManager.addEntity(laserHazard);
 
         // Bind EntityManager as step listener to capture pre/post physics snapshots for render interpolation
         this.physicsController.setStepListener(this.entityManager);
@@ -155,6 +180,19 @@ public class PlayScreen extends BaseScreen {
 
         // 3. Advance the physics simulation using the fixed timestep accumulator
         physicsController.update(delta);
+
+        // 3b. Process deferred respawn outside Box2D world lock
+        if (pendingRespawn) {
+            pendingRespawn = false;
+            if (!player.isDisposed()) {
+                player.getBody().setTransform(3.0f, 5.0f, 0.0f);
+                player.getBody().setLinearVelocity(0.0f, 0.0f);
+                player.resetInterpolation();
+            }
+            if (playerInputController != null) {
+                playerInputController.reset();
+            }
+        }
 
         // 4. Clear screen buffer with sleek background color
         ScreenUtils.clear(0.08f, 0.09f, 0.12f, 1.0f);
