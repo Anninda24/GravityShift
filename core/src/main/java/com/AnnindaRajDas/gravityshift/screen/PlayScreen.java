@@ -7,12 +7,17 @@ import com.AnnindaRajDas.gravityshift.debug.FallbackRuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.debug.RuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.entity.EntityManager;
 import com.AnnindaRajDas.gravityshift.entity.Player;
+import com.AnnindaRajDas.gravityshift.input.CompositeInputProvider;
+import com.AnnindaRajDas.gravityshift.input.KeyboardInput;
 import com.AnnindaRajDas.gravityshift.input.PlayerInputController;
+import com.AnnindaRajDas.gravityshift.input.TouchHud;
+import com.AnnindaRajDas.gravityshift.input.TouchInput;
 import com.AnnindaRajDas.gravityshift.physics.Direction;
 import com.AnnindaRajDas.gravityshift.physics.PhysicsController;
 import com.AnnindaRajDas.gravityshift.render.WorldRenderer;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Input;
+import com.badlogic.gdx.InputMultiplexer;
 import com.badlogic.gdx.physics.box2d.Box2DDebugRenderer;
 import com.badlogic.gdx.scenes.scene2d.Stage;
 import com.badlogic.gdx.utils.ScreenUtils;
@@ -32,7 +37,12 @@ public class PlayScreen extends BaseScreen {
     private final Box2DDebugRenderer debugRenderer;
     private final Stage hudStage;
     private final Player player;
+    private final KeyboardInput keyboardInput;
+    private final TouchInput touchInput;
+    private final CompositeInputProvider inputProvider;
     private final PlayerInputController playerInputController;
+    private final TouchHud touchHud;
+    private final InputMultiplexer inputMultiplexer;
     private final DebugOverlay debugOverlay;
     private boolean disposed = false;
 
@@ -52,7 +62,14 @@ public class PlayScreen extends BaseScreen {
 
         // Spawn player at (x=3.0m, y=5.0m) above the ground platform
         this.player = Player.create(physicsController.getBodyFactory(), 3.0f, 5.0f);
-        this.playerInputController = new PlayerInputController(player);
+        this.keyboardInput = new KeyboardInput();
+        this.touchInput = new TouchInput();
+        this.inputProvider = new CompositeInputProvider(keyboardInput, touchInput);
+        this.playerInputController = new PlayerInputController(player, inputProvider);
+        this.touchHud = new TouchHud(touchInput);
+        this.inputMultiplexer = (this.hudStage != null)
+                ? new InputMultiplexer(this.hudStage, this.touchInput)
+                : new InputMultiplexer(this.touchInput);
         this.entityManager.addEntity(player);
 
         // Bind EntityManager as step listener to capture pre/post physics snapshots for render interpolation
@@ -117,9 +134,21 @@ public class PlayScreen extends BaseScreen {
     }
 
     @Override
+    public void show() {
+        super.show();
+        if (Gdx.input != null) {
+            Gdx.input.setInputProcessor(inputMultiplexer);
+        }
+    }
+
+    @Override
     public void render(float delta) {
-        // 1. Process keyboard controller inputs before entity and physics updates
+        // 1. Process controller inputs (keyboard + touch) before entity and physics updates
         playerInputController.update();
+        Direction requestedGravity = playerInputController.consumeGravityRequest(getGravityDirection());
+        if (requestedGravity != null) {
+            setGravityDirection(requestedGravity);
+        }
 
         // 2. Update entity domain logic and lifecycle
         entityManager.update(delta);
@@ -148,6 +177,7 @@ public class PlayScreen extends BaseScreen {
             hudStage.act(delta);
             hudStage.draw();
         }
+        touchHud.render(hudCamera, getGravityDirection());
 
         // 9. Optional F3 toggle & lightweight zero-per-frame-allocation debug overlay
         if (Gdx.input != null && Gdx.input.isKeyJustPressed(Input.Keys.F3)) {
@@ -166,8 +196,27 @@ public class PlayScreen extends BaseScreen {
         if (hudStage != null && hudStage.getViewport() != null) {
             hudStage.getViewport().update(width, height, true);
         }
+        if (touchInput != null) {
+            touchInput.resize(width, height);
+        }
         if (debugOverlay != null) {
             debugOverlay.resize(width, height);
+        }
+    }
+
+    @Override
+    public void pause() {
+        super.pause();
+        if (playerInputController != null) {
+            playerInputController.reset();
+        }
+    }
+
+    @Override
+    public void hide() {
+        super.hide();
+        if (playerInputController != null) {
+            playerInputController.reset();
         }
     }
 
@@ -212,6 +261,17 @@ public class PlayScreen extends BaseScreen {
         }
         disposed = true;
         super.dispose();
+
+        // 0. Clear input processor and reset active pointers
+        if (playerInputController != null) {
+            playerInputController.reset();
+        }
+        if (Gdx.input != null && Gdx.input.getInputProcessor() == inputMultiplexer) {
+            Gdx.input.setInputProcessor(null);
+        }
+        if (touchHud != null) {
+            touchHud.dispose();
+        }
 
         // 1. Dispose HUD stage
         if (hudStage != null) {
