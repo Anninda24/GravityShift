@@ -20,6 +20,10 @@ public class PhysicsController implements Disposable {
     private boolean disposed = false;
 
     public PhysicsController() {
+        this(true);
+    }
+
+    public PhysicsController(boolean createDefaultEnvironment) {
         // Initialize native Box2D binaries once
         Box2D.init();
 
@@ -30,8 +34,10 @@ public class PhysicsController implements Disposable {
         this.bodyFactory = new BodyFactory(world);
         this.accumulator = 0.0f;
 
-        // Construct the initial static collision environment
-        createInitialEnvironment();
+        // Construct the initial static collision environment only when requested
+        if (createDefaultEnvironment) {
+            createInitialEnvironment();
+        }
     }
 
     /**

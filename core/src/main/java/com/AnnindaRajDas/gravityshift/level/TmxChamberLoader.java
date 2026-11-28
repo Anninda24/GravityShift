@@ -1,8 +1,11 @@
 package com.AnnindaRajDas.gravityshift.level;
 
 import com.AnnindaRajDas.gravityshift.level.ChamberDefinition.*;
+import com.AnnindaRajDas.gravityshift.physics.BodyFactory;
+import com.AnnindaRajDas.gravityshift.physics.FixtureType;
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.files.FileHandle;
+import com.badlogic.gdx.physics.box2d.Body;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -21,6 +24,22 @@ import java.util.List;
 public final class TmxChamberLoader {
 
     private TmxChamberLoader() {}
+
+    /**
+     * Shared chamber collision-geometry builder used by both {@code PlayScreen}
+     * and {@code ChamberReplayRunner} so real gameplay and replay use identical Box2D solids.
+     */
+    public static List<Body> buildCollisionGeometry(BodyFactory bodyFactory, ChamberDefinition chamber) {
+        if (bodyFactory == null || chamber == null) {
+            throw new IllegalArgumentException("BodyFactory and ChamberDefinition cannot be null.");
+        }
+        List<Body> created = new ArrayList<>(chamber.getSolids().size());
+        for (RectSpec solid : chamber.getSolids()) {
+            created.add(bodyFactory.createStaticBox(
+                    solid.x, solid.y, solid.width, solid.height, FixtureType.GROUND));
+        }
+        return created;
+    }
 
     public static String getChamberPath(int chamberNumber) {
         if (chamberNumber < 1 || chamberNumber > 8) {

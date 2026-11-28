@@ -54,6 +54,7 @@ public class PlayScreen extends BaseScreen {
     private boolean pendingNextChamber = false;
     private int currentChamberNumber = 1;
     private ChamberDefinition currentChamber;
+    private final java.util.List<com.badlogic.gdx.physics.box2d.Body> chamberSolidBodies = new java.util.ArrayList<>();
     private final KeyboardInput keyboardInput;
     private final TouchInput touchInput;
     private final CompositeInputProvider inputProvider;
@@ -69,7 +70,7 @@ public class PlayScreen extends BaseScreen {
 
     public PlayScreen(GravityShiftGame game, Stage hudStage) {
         super(game);
-        this.physicsController = new PhysicsController();
+        this.physicsController = new PhysicsController(false);
         this.entityManager = new EntityManager();
         this.worldRenderer = new WorldRenderer();
         this.debugRenderer = new Box2DDebugRenderer();
@@ -77,8 +78,13 @@ public class PlayScreen extends BaseScreen {
         // Initialize HUD stage for screen-space UI elements
         this.hudStage = (hudStage != null) ? hudStage : new Stage(hudViewport);
 
-        // Spawn player at (x=3.0m, y=5.0m) above the ground platform
-        this.player = Player.create(physicsController.getBodyFactory(), 3.0f, 5.0f);
+        // Load Chamber 1 TMX solids and entities
+        this.currentChamber = TmxChamberLoader.loadChamber(currentChamberNumber);
+        this.chamberSolidBodies.addAll(
+                TmxChamberLoader.buildCollisionGeometry(physicsController.getBodyFactory(), currentChamber));
+        // Spawn player at chamber spawn
+        this.player = Player.create(physicsController.getBodyFactory(),
+                currentChamber.getSpawnX(), currentChamber.getSpawnY());
         this.triggerBus = new TriggerBus();
         this.gravityCube = GravityCube.create(physicsController.getBodyFactory(), 6.5f, 1.5f);
         this.pressurePlate = PressurePlate.create(
@@ -162,6 +168,59 @@ public class PlayScreen extends BaseScreen {
         }
     }
 
+    private void loadChamberEntities(int chamberNumber) {
+        currentChamberNumber = chamberNumber;
+        currentChamber = TmxChamberLoader.loadChamber(chamberNumber);
+        triggerBus.clear();
+
+        // Remove all non-player entities from the previous chamber
+        for (int i = entityManager.getEntityCount() - 1; i >= 0; i--) {
+            com.AnnindaRajDas.gravityshift.entity.Entity e = entityManager.getEntityAt(i);
+            if (e != player) {
+                e.markForRemoval();
+            }
+        }
+
+        // Destroy previous chamber static solid bodies and rebuild from TMX
+        for (int i = 0; i < chamberSolidBodies.size(); i++) {
+            physicsController.getWorld().destroyBody(chamberSolidBodies.get(i));
+        }
+        chamberSolidBodies.clear();
+        chamberSolidBodies.addAll(
+                TmxChamberLoader.buildCollisionGeometry(physicsController.getBodyFactory(), currentChamber));
+
+        if (!player.isDisposed()) {
+            player.getBody().setTransform(currentChamber.getSpawnX(), currentChamber.getSpawnY(), 0.0f);
+            player.getBody().setLinearVelocity(0.0f, 0.0f);
+            player.resetInterpolation();
+        }
+        setGravityDirection(Direction.DOWN);
+        if (playerInputController != null) {
+            playerInputController.reset();
+        }
+
+        ChamberDefinition.RectSpec ex = currentChamber.getExit();
+        entityManager.addEntity(ExitPortal.create(
+                physicsController.getBodyFactory(), ex.x, ex.y, ex.width, ex.height,
+                () -> pendingNextChamber = true));
+        for (ChamberDefinition.CubeSpec c : currentChamber.getCubes()) {
+            entityManager.addEntity(GravityCube.create(physicsController.getBodyFactory(), c.x, c.y));
+        }
+        for (ChamberDefinition.PlateSpec p : currentChamber.getPlates()) {
+            entityManager.addEntity(PressurePlate.create(
+                    physicsController.getBodyFactory(), p.x, p.y, p.width, p.height, p.channelId, triggerBus));
+        }
+        for (ChamberDefinition.DoorSpec d : currentChamber.getDoors()) {
+            entityManager.addEntity(SlidingDoor.create(
+                    physicsController.getBodyFactory(), d.x, d.y, d.width, d.height, d.channelId, triggerBus));
+        }
+        for (ChamberDefinition.HazardSpec h : currentChamber.getHazards()) {
+            entityManager.addEntity(LaserHazard.create(
+                    physicsController.getBodyFactory(), h.x, h.y, h.width, h.height,
+                    h.channelId, triggerBus, h.initiallyActive, () -> pendingRespawn = true));
+        }
+    }
+
     public Direction getGravityDirection() {
         return physicsController.getGravityController().getGravityDirection();
     }
@@ -197,17 +256,7 @@ public class PlayScreen extends BaseScreen {
         if (pendingNextChamber) {
             pendingNextChamber = false;
             int next = (currentChamberNumber % 8) + 1;
-            currentChamberNumber = next;
-            currentChamber = TmxChamberLoader.loadChamber(currentChamberNumber);
-            if (!player.isDisposed()) {
-                player.getBody().setTransform(currentChamber.getSpawnX(), currentChamber.getSpawnY(), 0.0f);
-                player.getBody().setLinearVelocity(0.0f, 0.0f);
-                player.resetInterpolation();
-            }
-            setGravityDirection(Direction.DOWN);
-            if (playerInputController != null) {
-                playerInputController.reset();
-            }
+            loadChamberEntities(next);
         }
         if (pendingRespawn || (Gdx.input != null && Gdx.input.isKeyJustPressed(Input.Keys.R))) {
             pendingRespawn = false;

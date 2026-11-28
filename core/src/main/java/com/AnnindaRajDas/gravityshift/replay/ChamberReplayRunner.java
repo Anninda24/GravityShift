@@ -11,6 +11,7 @@ import com.AnnindaRajDas.gravityshift.entity.SlidingDoor;
 import com.AnnindaRajDas.gravityshift.input.PlayerInputController;
 import com.AnnindaRajDas.gravityshift.level.ChamberDefinition;
 import com.AnnindaRajDas.gravityshift.level.ChamberDefinition.*;
+import com.AnnindaRajDas.gravityshift.level.TmxChamberLoader;
 import com.AnnindaRajDas.gravityshift.physics.Direction;
 import com.AnnindaRajDas.gravityshift.physics.FixtureType;
 import com.AnnindaRajDas.gravityshift.physics.GameContactListener;
@@ -45,7 +46,7 @@ public final class ChamberReplayRunner {
     private ChamberReplayRunner() {}
 
     public static ReplayResult run(ChamberDefinition chamber, ReplayInputProvider replay, int maxSteps) {
-        PhysicsController physics = new PhysicsController();
+        PhysicsController physics = new PhysicsController(false);
         EntityManager entities = new EntityManager();
         physics.setStepListener(entities);
         TriggerBus bus = new TriggerBus();
@@ -53,11 +54,8 @@ public final class ChamberReplayRunner {
         final boolean[] exitReached = { false };
         final boolean[] playerDied = { false };
 
-        // Build chamber solids from TMX
-        for (RectSpec solid : chamber.getSolids()) {
-            physics.getBodyFactory().createStaticBox(
-                    solid.x, solid.y, solid.width, solid.height, FixtureType.GROUND);
-        }
+        // Build chamber solids from TMX using shared builder
+        TmxChamberLoader.buildCollisionGeometry(physics.getBodyFactory(), chamber);
 
         Player player = Player.create(physics.getBodyFactory(), chamber.getSpawnX(), chamber.getSpawnY());
         entities.addEntity(player);
