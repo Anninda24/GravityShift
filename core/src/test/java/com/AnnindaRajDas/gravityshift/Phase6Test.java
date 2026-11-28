@@ -59,7 +59,7 @@ public class Phase6Test {
         ChamberDefinition c1 = TmxChamberLoader.loadChamber(1);
         ReplayInputProvider replay = new ReplayInputProvider()
                 .addGravityShift(10, Direction.RIGHT)
-                .addMove(20, 260, 0.0f, 1.0f);
+                .addMove(20, 75, 0.0f, 1.0f);
         ReplayResult res = ChamberReplayRunner.run(c1, replay, 400);
         assertTrue(res.reachedExit, "Chamber 1 replay failed: " + res.failureReason);
     }
@@ -93,8 +93,9 @@ public class Phase6Test {
         ChamberDefinition c4 = TmxChamberLoader.loadChamber(4);
         ReplayInputProvider replay = new ReplayInputProvider()
                 .addGravityShift(20, Direction.RIGHT)
-                .addGravityShift(55, Direction.DOWN)
-                .addMove(75, 450, 1.0f, 0.0f);
+                .addGravityShift(45, Direction.DOWN)
+                .addMove(75, 450, 1.0f, 0.0f)
+                .addJump(130);
         ReplayResult res = ChamberReplayRunner.run(c4, replay, 500);
         assertTrue(res.reachedExit, "Chamber 4 replay failed: " + res.failureReason);
     }
@@ -106,8 +107,9 @@ public class Phase6Test {
                 .addGravityShift(10, Direction.RIGHT)
                 .addGravityShift(45, Direction.DOWN)
                 .addGravityShift(80, Direction.UP)
-                .addMove(100, 230, 1.0f, 0.0f)
-                .addGravityShift(230, Direction.DOWN);
+                .addMove(100, 145, 1.0f, 0.0f)
+                .addGravityShift(145, Direction.DOWN)
+                .addMove(165, 500, 1.0f, 0.0f);
         ReplayResult res = ChamberReplayRunner.run(c5, replay, 550);
         assertTrue(res.reachedExit, "Chamber 5 replay failed: " + res.failureReason);
     }
@@ -116,9 +118,12 @@ public class Phase6Test {
     void testChamber6RecordedSolutionReplay() {
         ChamberDefinition c6 = TmxChamberLoader.loadChamber(6);
         ReplayInputProvider replay = new ReplayInputProvider()
+                .addMove(0, 15, -1.0f, 0.0f)
                 .addGravityShift(20, Direction.RIGHT)
-                .addGravityShift(55, Direction.DOWN)
-                .addMove(75, 450, 1.0f, 0.0f);
+                .addGravityShift(66, Direction.DOWN)
+                .addMove(85, 500, 1.0f, 0.0f)
+                .addJump(130)
+                .addJump(180);
         ReplayResult res = ChamberReplayRunner.run(c6, replay, 550);
         assertTrue(res.reachedExit, "Chamber 6 replay failed: " + res.failureReason);
     }
@@ -128,11 +133,12 @@ public class Phase6Test {
         ChamberDefinition c7 = TmxChamberLoader.loadChamber(7);
         ReplayInputProvider replay = new ReplayInputProvider()
                 .addGravityShift(15, Direction.UP)
-                .addMove(30, 150, 1.0f, 0.0f)
-                .addGravityShift(150, Direction.DOWN)
-                .addGravityShift(185, Direction.RIGHT)
-                .addGravityShift(220, Direction.DOWN)
-                .addMove(240, 550, 1.0f, 0.0f);
+                .addMove(30, 115, 1.0f, 0.0f)
+                .addGravityShift(115, Direction.DOWN)
+                .addGravityShift(155, Direction.RIGHT)
+                .addGravityShift(195, Direction.DOWN)
+                .addMove(215, 550, 1.0f, 0.0f)
+                .addJump(255);
         ReplayResult res = ChamberReplayRunner.run(c7, replay, 600);
         assertTrue(res.reachedExit, "Chamber 7 replay failed: " + res.failureReason);
     }
@@ -142,11 +148,12 @@ public class Phase6Test {
         ChamberDefinition c8 = TmxChamberLoader.loadChamber(8);
         ReplayInputProvider replay = new ReplayInputProvider()
                 .addGravityShift(15, Direction.UP)
-                .addMove(30, 150, 1.0f, 0.0f)
-                .addGravityShift(150, Direction.DOWN)
-                .addGravityShift(185, Direction.RIGHT)
-                .addGravityShift(220, Direction.DOWN)
-                .addMove(240, 550, 1.0f, 0.0f);
+                .addMove(30, 105, 1.0f, 0.0f)
+                .addGravityShift(105, Direction.DOWN)
+                .addGravityShift(190, Direction.RIGHT)
+                .addGravityShift(230, Direction.DOWN)
+                .addMove(245, 550, 1.0f, 0.0f)
+                .addJump(280);
         ReplayResult res = ChamberReplayRunner.run(c8, replay, 600);
         assertTrue(res.reachedExit, "Chamber 8 replay failed: " + res.failureReason);
     }

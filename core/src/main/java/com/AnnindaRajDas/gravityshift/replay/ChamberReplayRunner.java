@@ -65,16 +65,26 @@ public final class ChamberReplayRunner {
                 physics.getBodyFactory(), ex.x, ex.y, ex.width, ex.height, () -> exitReached[0] = true);
         entities.addEntity(exit);
 
+        java.util.List<GravityCube> cubes = new java.util.ArrayList<>();
+        java.util.List<PressurePlate> plates = new java.util.ArrayList<>();
+        java.util.List<SlidingDoor> doors = new java.util.ArrayList<>();
+
         for (CubeSpec c : chamber.getCubes()) {
-            entities.addEntity(GravityCube.create(physics.getBodyFactory(), c.x, c.y));
+            GravityCube cube = GravityCube.create(physics.getBodyFactory(), c.x, c.y);
+            cubes.add(cube);
+            entities.addEntity(cube);
         }
         for (PlateSpec p : chamber.getPlates()) {
-            entities.addEntity(PressurePlate.create(
-                    physics.getBodyFactory(), p.x, p.y, p.width, p.height, p.channelId, bus));
+            PressurePlate plate = PressurePlate.create(
+                    physics.getBodyFactory(), p.x, p.y, p.width, p.height, p.channelId, bus);
+            plates.add(plate);
+            entities.addEntity(plate);
         }
         for (DoorSpec d : chamber.getDoors()) {
-            entities.addEntity(SlidingDoor.create(
-                    physics.getBodyFactory(), d.x, d.y, d.width, d.height, d.channelId, bus));
+            SlidingDoor door = SlidingDoor.create(
+                    physics.getBodyFactory(), d.x, d.y, d.width, d.height, d.channelId, bus);
+            doors.add(door);
+            entities.addEntity(door);
         }
         for (HazardSpec h : chamber.getHazards()) {
             entities.addEntity(LaserHazard.create(
@@ -107,9 +117,22 @@ public final class ChamberReplayRunner {
                     return new ReplayResult(chamber.getChamberNumber(), true, false, step + 1, null);
                 }
             }
-            return new ReplayResult(chamber.getChamberNumber(), false, false, maxSteps,
-                    "Did not reach exit within " + maxSteps + " steps (player at x="
-                            + player.getX() + ", y=" + player.getY() + ")");
+            StringBuilder diag = new StringBuilder();
+            diag.append("Did not reach exit within ").append(maxSteps)
+                .append(" steps (player=(").append(player.getX()).append(",").append(player.getY())
+                .append(") grav=").append(physics.getGravityController().getGravityDirection());
+            for (int i = 0; i < cubes.size(); i++) {
+                diag.append(" cube").append(i).append("=(").append(cubes.get(i).getX())
+                    .append(",").append(cubes.get(i).getY()).append(")");
+            }
+            for (int i = 0; i < plates.size(); i++) {
+                diag.append(" plate").append(i).append("=").append(plates.get(i).isPressed());
+            }
+            for (int i = 0; i < doors.size(); i++) {
+                diag.append(" door").append(i).append("=").append(doors.get(i).isOpen());
+            }
+            diag.append(")");
+            return new ReplayResult(chamber.getChamberNumber(), false, false, maxSteps, diag.toString());
         } finally {
             bus.clear();
             entities.dispose();

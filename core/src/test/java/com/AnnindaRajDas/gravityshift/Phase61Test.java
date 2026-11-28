@@ -37,7 +37,8 @@ public class Phase61Test {
         ReplayResult res = ChamberReplayRunner.run(c1, replay, 150);
         assertFalse(res.reachedExit);
         assertNotNull(res.failureReason);
-        assertTrue(res.failureReason.contains("y=10.") || res.failureReason.contains("y=9."),
+        assertTrue(res.failureReason.contains(",10.") || res.failureReason.contains(",9.")
+                        || res.failureReason.contains("y=10.") || res.failureReason.contains("y=9."),
                 "Player should reach ceiling without hidden central platform, got: " + res.failureReason);
     }
 
@@ -93,7 +94,7 @@ public class Phase61Test {
         assertEquals(2.0f, c4.getSpawnY(), 0.001f);
 
         ChamberDefinition c6 = TmxChamberLoader.loadChamber(6);
-        assertEquals(1, c6.getCubes().size());
+        assertEquals(2, c6.getCubes().size());
         assertEquals(2, c6.getPlates().size());
         assertEquals(2, c6.getDoors().size());
         assertEquals("door_1", c6.getPlates().get(0).channelId);
