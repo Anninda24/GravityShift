@@ -3,6 +3,7 @@ package com.AnnindaRajDas.gravityshift.render;
 import com.AnnindaRajDas.gravityshift.config.GameConfig;
 import com.AnnindaRajDas.gravityshift.entity.Entity;
 import com.AnnindaRajDas.gravityshift.entity.EntityManager;
+import com.AnnindaRajDas.gravityshift.entity.ExitPortal;
 import com.AnnindaRajDas.gravityshift.entity.GravityCube;
 import com.AnnindaRajDas.gravityshift.entity.LaserHazard;
 import com.AnnindaRajDas.gravityshift.entity.Player;
@@ -209,6 +210,11 @@ public class WorldRenderer implements Disposable {
                     shapeRenderer.setColor(0.45f, 0.18f, 0.20f, 0.25f);
                 }
                 shapeRenderer.rect(x, y, hazard.getWidth(), hazard.getHeight());
+            } else if (entity instanceof ExitPortal portal) {
+                float x = portal.getX() - portal.getWidth() / 2.0f;
+                float y = portal.getY() - portal.getHeight() / 2.0f;
+                shapeRenderer.setColor(0.15f, 0.95f, 0.85f, 0.75f);
+                shapeRenderer.rect(x, y, portal.getWidth(), portal.getHeight());
             }
         }
         shapeRenderer.end();

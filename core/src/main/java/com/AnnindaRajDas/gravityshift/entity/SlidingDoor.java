@@ -75,6 +75,10 @@ public class SlidingDoor extends Entity implements TriggerListener {
         if (isDisposed() || !this.channelId.equals(channelId)) {
             return;
         }
+        if (com.badlogic.gdx.Gdx.app != null) {
+            com.badlogic.gdx.Gdx.app.log("Phase5Diag",
+                    "SlidingDoor[" + channelId + "] onTriggerChanged -> targetOpen=" + active);
+        }
         this.targetOpen = active;
     }
 
@@ -91,6 +95,10 @@ public class SlidingDoor extends Entity implements TriggerListener {
         if (targetOpen != open) {
             open = targetOpen;
             doorFixture.setSensor(open);
+            if (com.badlogic.gdx.Gdx.app != null) {
+                com.badlogic.gdx.Gdx.app.log("Phase5Diag",
+                        "SlidingDoor[" + channelId + "] applied open=" + open + " isSensor=" + doorFixture.isSensor());
+            }
         }
     }
 

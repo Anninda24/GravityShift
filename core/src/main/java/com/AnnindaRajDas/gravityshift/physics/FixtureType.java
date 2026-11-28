@@ -39,7 +39,10 @@ public enum FixtureType {
     SLIDING_DOOR,
 
     /** Lethal laser hazard sensor */
-    HAZARD_LASER;
+    HAZARD_LASER,
+
+    /** Chamber exit portal sensor */
+    EXIT_PORTAL;
 
     /**
      * Checks if this fixture type represents one of the player's directional support sensors.

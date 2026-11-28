@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.10" tiledversion="1.10.2" orientation="orthogonal" renderorder="right-down" width="20" height="12" tilewidth="32" tileheight="32" infinite="0">
+ <properties>
+  <property name="name" value="Chamber 5: Wall Drop"/>
+ </properties>
+ <layer id="1" name="solids" width="20" height="12">
+  <data encoding="csv">
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,
+1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+</data>
+ </layer>
+ <objectgroup id="2" name="objects">
+  <object id="1" name="spawn" type="spawn" x="96" y="288" width="32" height="32"/>
+  <object id="2" name="cube1" type="cube" x="192" y="96" width="32" height="32"/>
+  <object id="3" name="laser1" type="laser" x="288" y="288" width="32" height="64"/>
+  <object id="4" name="plate1" type="plate" x="384" y="332" width="64" height="20">
+   <properties>
+    <property name="channel" value="door_1"/>
+   </properties>
+  </object>
+  <object id="5" name="door1" type="door" x="480" y="256" width="20" height="96">
+   <properties>
+    <property name="channel" value="door_1"/>
+   </properties>
+  </object>
+  <object id="6" name="exit" type="exit" x="544" y="288" width="48" height="64"/>
+ </objectgroup>
+</map>

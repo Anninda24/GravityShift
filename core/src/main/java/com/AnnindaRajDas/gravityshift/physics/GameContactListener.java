@@ -1,5 +1,6 @@
 package com.AnnindaRajDas.gravityshift.physics;
 
+import com.AnnindaRajDas.gravityshift.entity.ExitPortal;
 import com.AnnindaRajDas.gravityshift.entity.LaserHazard;
 import com.AnnindaRajDas.gravityshift.entity.Player;
 import com.AnnindaRajDas.gravityshift.entity.PressurePlate;
@@ -74,6 +75,12 @@ public class GameContactListener implements ContactListener {
             } else if (typeB == FixtureType.HAZARD_LASER && typeA == FixtureType.PLAYER_BODY) {
                 notifyLaserHazard(fixtureB, isBegin);
             }
+
+            if (typeA == FixtureType.EXIT_PORTAL && typeB == FixtureType.PLAYER_BODY) {
+                notifyExitPortal(fixtureA, isBegin);
+            } else if (typeB == FixtureType.EXIT_PORTAL && typeA == FixtureType.PLAYER_BODY) {
+                notifyExitPortal(fixtureB, isBegin);
+            }
         }
     }
 
@@ -87,6 +94,11 @@ public class GameContactListener implements ContactListener {
         }
         Object bodyUserData = plateFixture.getBody().getUserData();
         if (bodyUserData instanceof PressurePlate plate && !plate.isDisposed()) {
+            if (com.badlogic.gdx.Gdx.app != null) {
+                com.badlogic.gdx.Gdx.app.log("Phase5Diag",
+                        "Contact " + (isBegin ? "BEGIN" : "END") + " plate=" + plate.getChannelId()
+                        + " activator=" + activatorFixture.getUserData());
+            }
             if (isBegin) {
                 plate.onSensorContactBegin(activatorFixture);
             } else {
@@ -105,6 +117,20 @@ public class GameContactListener implements ContactListener {
                 hazard.onPlayerContactBegin();
             } else {
                 hazard.onPlayerContactEnd();
+            }
+        }
+    }
+
+    private void notifyExitPortal(Fixture exitFixture, boolean isBegin) {
+        if (exitFixture.getBody() == null) {
+            return;
+        }
+        Object bodyUserData = exitFixture.getBody().getUserData();
+        if (bodyUserData instanceof ExitPortal portal && !portal.isDisposed()) {
+            if (isBegin) {
+                portal.onPlayerContactBegin();
+            } else {
+                portal.onPlayerContactEnd();
             }
         }
     }

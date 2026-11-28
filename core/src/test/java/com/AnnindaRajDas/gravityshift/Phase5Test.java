@@ -245,4 +245,42 @@ public class Phase5Test {
         hazard.dispose();
         assertTrue(hazard.isDisposed());
     }
+
+    @Test
+    void testPlayScreenExactCoordinatesCubeSlidingOntoPlateOpensDoor() {
+        TriggerBus bus = new TriggerBus();
+        GravityCube cube = GravityCube.create(physicsController.getBodyFactory(), 6.5f, 1.5f);
+        PressurePlate plate = PressurePlate.create(
+                physicsController.getBodyFactory(), 11.0f, 1.0f, 2.0f, 0.6f, "door_1", bus);
+        SlidingDoor door = SlidingDoor.create(
+                physicsController.getBodyFactory(), 16.0f, 1.0f, 0.6f, 3.5f, "door_1", bus);
+
+        entityManager.addEntity(cube);
+        entityManager.addEntity(plate);
+        entityManager.addEntity(door);
+
+        // Settle cube onto ground (y=1.0)
+        stepFrames(30);
+        assertFalse(plate.isPressed());
+        assertFalse(door.isOpen());
+
+        // Shift gravity RIGHT briefly so cube slides onto plate at x=11..13, then DOWN
+        physicsController.getGravityController().setGravityDirection(Direction.RIGHT);
+        cube.wakeUp();
+        stepFrames(35);
+        physicsController.getGravityController().setGravityDirection(Direction.DOWN);
+        cube.wakeUp();
+        stepFrames(40);
+
+        assertTrue(plate.isPressed(), "Plate should be pressed when cube is on it (x=" + cube.getX()
+                + ", y=" + cube.getY() + ", contacts=" + plate.getActiveContactCount() + ")");
+        assertTrue(door.isOpen(), "Door should open when plate is pressed");
+
+        // Move cube off plate (RIGHT) -> plate deactivates and door closes
+        physicsController.getGravityController().setGravityDirection(Direction.RIGHT);
+        cube.wakeUp();
+        stepFrames(60);
+        assertFalse(plate.isPressed(), "Plate should deactivate when cube leaves");
+        assertFalse(door.isOpen(), "Door should close when plate deactivates");
+    }
 }

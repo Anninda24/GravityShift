@@ -6,11 +6,14 @@ import com.AnnindaRajDas.gravityshift.debug.DebugOverlay;
 import com.AnnindaRajDas.gravityshift.debug.FallbackRuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.debug.RuntimeMetricsProvider;
 import com.AnnindaRajDas.gravityshift.entity.EntityManager;
+import com.AnnindaRajDas.gravityshift.entity.ExitPortal;
 import com.AnnindaRajDas.gravityshift.entity.GravityCube;
 import com.AnnindaRajDas.gravityshift.entity.LaserHazard;
 import com.AnnindaRajDas.gravityshift.entity.Player;
 import com.AnnindaRajDas.gravityshift.entity.PressurePlate;
 import com.AnnindaRajDas.gravityshift.entity.SlidingDoor;
+import com.AnnindaRajDas.gravityshift.level.ChamberDefinition;
+import com.AnnindaRajDas.gravityshift.level.TmxChamberLoader;
 import com.AnnindaRajDas.gravityshift.input.CompositeInputProvider;
 import com.AnnindaRajDas.gravityshift.input.KeyboardInput;
 import com.AnnindaRajDas.gravityshift.input.PlayerInputController;
@@ -48,6 +51,9 @@ public class PlayScreen extends BaseScreen {
     private final SlidingDoor slidingDoor;
     private final LaserHazard laserHazard;
     private boolean pendingRespawn = false;
+    private boolean pendingNextChamber = false;
+    private int currentChamberNumber = 1;
+    private ChamberDefinition currentChamber;
     private final KeyboardInput keyboardInput;
     private final TouchInput touchInput;
     private final CompositeInputProvider inputProvider;
@@ -76,7 +82,7 @@ public class PlayScreen extends BaseScreen {
         this.triggerBus = new TriggerBus();
         this.gravityCube = GravityCube.create(physicsController.getBodyFactory(), 6.5f, 1.5f);
         this.pressurePlate = PressurePlate.create(
-                physicsController.getBodyFactory(), 11.0f, 1.0f, 2.0f, 0.25f, "door_1", triggerBus);
+                physicsController.getBodyFactory(), 11.0f, 1.0f, 2.0f, 0.6f, "door_1", triggerBus);
         this.slidingDoor = SlidingDoor.create(
                 physicsController.getBodyFactory(), 16.0f, 1.0f, 0.6f, 3.5f, "door_1", triggerBus);
         this.laserHazard = LaserHazard.create(
@@ -96,6 +102,12 @@ public class PlayScreen extends BaseScreen {
         this.entityManager.addEntity(pressurePlate);
         this.entityManager.addEntity(slidingDoor);
         this.entityManager.addEntity(laserHazard);
+        this.entityManager.addEntity(ExitPortal.create(
+                physicsController.getBodyFactory(), 17.5f, 1.0f, 1.5f, 2.0f,
+                () -> pendingNextChamber = true));
+        if (Gdx.app != null) {
+            Gdx.app.log("Phase5Diag", "PlayScreen initialized: plate=" + pressurePlate.getChannelId());
+        }
 
         // Bind EntityManager as step listener to capture pre/post physics snapshots for render interpolation
         this.physicsController.setStepListener(this.entityManager);
@@ -181,14 +193,32 @@ public class PlayScreen extends BaseScreen {
         // 3. Advance the physics simulation using the fixed timestep accumulator
         physicsController.update(delta);
 
-        // 3b. Process deferred respawn outside Box2D world lock
-        if (pendingRespawn) {
-            pendingRespawn = false;
+        // 3b. Process deferred respawn or chamber transition outside Box2D world lock
+        if (pendingNextChamber) {
+            pendingNextChamber = false;
+            int next = (currentChamberNumber % 8) + 1;
+            currentChamberNumber = next;
+            currentChamber = TmxChamberLoader.loadChamber(currentChamberNumber);
             if (!player.isDisposed()) {
-                player.getBody().setTransform(3.0f, 5.0f, 0.0f);
+                player.getBody().setTransform(currentChamber.getSpawnX(), currentChamber.getSpawnY(), 0.0f);
                 player.getBody().setLinearVelocity(0.0f, 0.0f);
                 player.resetInterpolation();
             }
+            setGravityDirection(Direction.DOWN);
+            if (playerInputController != null) {
+                playerInputController.reset();
+            }
+        }
+        if (pendingRespawn || (Gdx.input != null && Gdx.input.isKeyJustPressed(Input.Keys.R))) {
+            pendingRespawn = false;
+            if (!player.isDisposed()) {
+                float sx = (currentChamber != null) ? currentChamber.getSpawnX() : 3.0f;
+                float sy = (currentChamber != null) ? currentChamber.getSpawnY() : 5.0f;
+                player.getBody().setTransform(sx, sy, 0.0f);
+                player.getBody().setLinearVelocity(0.0f, 0.0f);
+                player.resetInterpolation();
+            }
+            setGravityDirection(Direction.DOWN);
             if (playerInputController != null) {
                 playerInputController.reset();
             }

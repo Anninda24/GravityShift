@@ -114,6 +114,10 @@ public class PressurePlate extends Entity {
         boolean shouldBePressed = activeFixtures.size > 0;
         if (shouldBePressed != pressed) {
             pressed = shouldBePressed;
+            if (com.badlogic.gdx.Gdx.app != null) {
+                com.badlogic.gdx.Gdx.app.log("Phase5Diag",
+                        "PressurePlate[" + channelId + "] state -> " + pressed + " contacts=" + activeFixtures.size);
+            }
             triggerBus.publish(channelId, pressed);
         }
     }
